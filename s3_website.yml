@@ -7,7 +7,9 @@ s3_bucket: willjordan.us
 
 # site: path-to-your-website
 
-max_age: <%= 60 * 60 * 24 %>
+max_age:
+  "assets/*": 31536000
+  "*": 0 # s3_website treats 0 as 'no-cache', but we want to cache on CDN
 
 gzip: true
 gzip_zopfli: true
@@ -27,13 +29,13 @@ cloudfront_distribution_id: E2ONU3Z7W3VS5Q
 
 cloudfront_distribution_config:
    default_cache_behavior:
-     min_TTL: <%= 60 * 60 * 24 %>
+     min_TTL: 31536000
    aliases:
      quantity: 1
      items:
        CNAME: willjordan.us
 
-# cloudfront_invalidate_root: true
+cloudfront_invalidate_root: true
 
 # concurrency_level: 5
 
@@ -49,3 +51,14 @@ cloudfront_distribution_config:
 #       host_name: blog.example.com
 #       replace_key_prefix_with: some_new_path/
 #       http_redirect_code: 301
+
+redirects:
+  diss: /Ludocapital.pdf
+  diss.ch1: /Ludocapital.pdf#nameddest=chapter.2
+  diss.ch2: /Ludocapital.pdf#nameddest=chapter.2
+  diss.ch3: /Ludocapital.pdf#nameddest=chapter.2
+  diss.ch4: /Ludocapital.pdf#nameddest=chapter.2
+  diss.src: https://github.com/wjordan/ludocapital
+  cv: /cv.pdf
+  cv.src: https://github.com/wjordan/cv
+  code: https://github.com/wjordan/
