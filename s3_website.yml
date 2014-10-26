@@ -54,10 +54,10 @@ cloudfront_invalidate_root: true
 
 redirects:
   diss: /Ludocapital.pdf
-  diss.ch1: /Ludocapital.pdf#nameddest=chapter.2
+  diss.ch1: /Ludocapital.pdf#nameddest=chapter.1
   diss.ch2: /Ludocapital.pdf#nameddest=chapter.2
-  diss.ch3: /Ludocapital.pdf#nameddest=chapter.2
-  diss.ch4: /Ludocapital.pdf#nameddest=chapter.2
+  diss.ch3: /Ludocapital.pdf#nameddest=chapter.3
+  diss.ch4: /Ludocapital.pdf#nameddest=chapter.4
   diss.src: https://github.com/wjordan/ludocapital
   cv: /cv.pdf
   cv.src: https://github.com/wjordan/cv
