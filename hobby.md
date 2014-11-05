@@ -11,11 +11,11 @@ To be completed...
 ## Tetris project
 
 <figure>
-  {% image tetris-emulation.png %}
+  {% image_data tetris-emulation.png %}
   <figcaption>Early Tetris prototype for the Elektronika-60 computer, running in a modern emulator.</figcaption>
 </figure>
 <figure>
-  {% image tetris-dos.png %}
+  {% image_data tetris-dos.png %}
   <figcaption>Early Tetris prototype for the IBM-PC, running in a modern emulator.</figcaption>
 </figure>
 

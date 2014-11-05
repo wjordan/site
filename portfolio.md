@@ -27,7 +27,7 @@ ZipZapPlay was a independent social games startup, [acquired by PopCap](http://w
 I worked on the Facebook game, [Plants vs. Zombies: Adventures](http://www.popcap.com/plants-vs-zombies-adventures), from its initial prototyping phase in July 2011 until mid-production in September 2012. I designed and implemented the game's data-driven, component-oriented game architecture, and the creation of an optimized 2D rendering engine featuring [blitting](http://gamedevelopment.tutsplus.com/articles/gamedev-glossary-what-is-blitting--gamedev-2247) [techniques](http://www.adobe.com/devnet/flex/articles/actionscript_blitting.html) and a [quadtree](http://gamedevelopment.tutsplus.com/tutorials/quick-tip-use-quadtrees-to-detect-likely-collisions-in-2d-space--gamedev-374)-based dirty rectangle algorithm that vastly outperformed the Flash Platform's proprietary 2D engine, enabling the game to feature many high-quality animated objects on screen.  The game was [released in May 2013](http://venturebeat.com/2013/05/20/call-in-sick-plants-vs-zombies-adventures-is-out-now/), reaching an audience of over 8 million monthly active users in August 2013, and was [shut down in October 2014](http://www.insidesocialgames.com/2014/07/24/ea-announces-closure-of-plants-vs-zombies-adventures-on-facebook/).
 
 ##Baking Life
-{% image baking-life.jpg %}{% image baking_life_screenshot.jpg %}
+{% webp baking-life.jpg %}{% webp baking_life_screenshot.jpg %}
 
 <div width="420" height="315" class="youtube" youtubeid="SSFrW_TXG_w" thumbnail="{% asset_path SSFrW_TXG_w.jpg %}"></div>
 
@@ -35,7 +35,7 @@ I worked on the Facebook game, Baking Life, from shortly after its initial launc
 
 After joining the company full-time in September 2010, I worked closely with the company's producers, artists and game designers implementing feature updates and new game mechanics including a messaging center that integrated with Facebook [Requests](https://developers.facebook.com/docs/games/requests). I also heavily optimized the rendering engine, implementing a bitmap caching algorithm that vastly increased the game's performance on memory-constrained devices.
 
-{% image baking_life_message_center.jpg %}
+{% webp baking_life_message_center.jpg %}
 
 #Javaground
 
@@ -45,19 +45,19 @@ After joining the company full-time in September 2010, I worked closely with the
 
 ##Xpressed.com
 
-{% image xpressed-product-page.jpg %}
+{% webp xpressed-product-page.jpg %}
 
 Launched [March 2009](http://www.reuters.com/article/2009/03/10/idUS92579+10-Mar-2009+MW20090310), Xpressed.com was a mobile game marketplace for developers and publishers to sell their content directly to consumers. I was lead developer on the project, building the web architecture, a mobile game emulator Java applet, and payment provider integrations.
 
 ##Xpress Suite
 
-{% image xpress-suite.jpg %}
+{% webp xpress-suite.jpg %}
 
 I worked on several features for Xpress Suite, Javaground's mobile game development middleware supporting over 1000 unique mobile devices, including Java ME to C++/BREW source code translation and a high-level game engine library.
 
 ##Game development and porting
 
-{% image karate.jpg %}
+{% webp karate.jpg %}
 
 I worked on several of Javaground's original mobile game development projects, including lead developer on [Squared!](https://iphonetech78.wordpress.com/2009/11/02/squared-game-review/), [Pocket Gold](https://iphonetech78.wordpress.com/2009/06/27/javaground-usa-announces-pocket-gold-for-iphone-gaming/) and [Karate](http://toucharcade.com/2009/07/13/a-peek-at-an-upcoming-karate-action-adventure/) (unpublished) for the iPhone, and assisted development of [The Inferno](http://www.148apps.com/reviews/inferno/) and [Uniwar](http://www.uniwar.com) [(review)](http://www.ign.com/articles/2009/05/04/uniwar-iphone-review) for iPhone and Android.
 
