@@ -2,14 +2,14 @@ language: ruby
 rvm:
   - '2.1'
 before_install:
-  # include webp backport
-  - sudo add-apt-repository ppa:lyrasis/precise-backports -y
-  - sudo apt-get update -qq
-  - sudo apt-get install -y libjpeg-dev libpng-dev libtiff-dev libwebp-dev
   # speed up gem install with s3 bundle cache
   - wget https://s3.amazonaws.com/bundle-cache-builds/bundle_cache
   - chmod +x ./bundle_cache
   - ./bundle_cache download
+  # include webp backport
+  - sudo add-apt-repository ppa:lyrasis/precise-backports -y
+  - sudo apt-get update -qq
+  - sudo apt-get install -y libjpeg-dev libpng-dev libtiff-dev libwebp-dev
 install:
   # Install Jekyll and dependencies
   - bundle install
