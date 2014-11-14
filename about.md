@@ -18,5 +18,3 @@ In my dissertation, I advance a critical theory of ludocapitalism, the incorpora
 Will Jordan
 
 [wjordan@uci.edu](mailto:wjordan@uci.edu)
-
-(203) 895-3149

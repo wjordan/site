@@ -1,14 +1,10 @@
 ---
 layout: page
-title: Projects
-permalink: /projects/
+title: Tetris
+permalink: /tetris/
 ---
 
-This is my hobby and side projects page. See also my [professional portfolio](/portfolio/).
-
-To be completed...
-
-## Tetris project
+# Tetris project
 
 <figure>
   {% image_data tetris-emulation.png %}
@@ -28,3 +24,8 @@ which will be comprised of:
 Tetris-like variations; and
 * a syllabus and lesson plan for a college-level interdisciplinary digital media course
 in which students will design and build their own Tetris-like games using conventional game development tools.
+
+## Technical Goals
+
+* Open Web access: Integrate open-source emulators capable of emulating historical computing platforms through the modern, open web platform.
+  
