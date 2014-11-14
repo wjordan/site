@@ -13,7 +13,7 @@ before_install:
   - ./bundle_cache download
 install:
   # Install Jekyll and dependencies
-  - bundle install --without development --deployment --path .bundle
+  - bundle install --path .bundle
 script: bundle exec jekyll build && bundle exec s3_website push
 after_script:
   - ./bundle_cache upload
