@@ -1,0 +1,7 @@
+language: ruby
+
+install:
+  # Install Jekyll and dependencies
+  - bundle install
+
+script: bundle exec s3_website push
