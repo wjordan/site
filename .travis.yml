@@ -13,6 +13,8 @@ before_install:
   - export PATH=$PATH:/home/travis/opt/include
   - export INCLUDE=$INCLUDE:/home/travis/opt/include
   - export CPATH=$CPATH:/home/travis/opt/include
+  - export LDFLAGS=-L/home/travis/opt/lib
+  - export LD_FLAGS=-L/home/travis/opt/lib
 install:
   # Install Jekyll and dependencies
   - bundle install --path .bundle
