@@ -7,9 +7,9 @@ before_install:
   - wget http://downloads.webmproject.org/releases/webp/libwebp-0.4.2.tar.gz
   - tar xvzf libwebp-0.4.2.tar.gz
   - cd libwebp-0.4.2
-  - ./configure --prefix=~/opt
+  - ./configure --prefix=/home/travis/opt
   - make && make install
-  - export LD_LIBRARY_PATH=/lib:/usr/lib:/usr/local/lib:~/opt
+  - export LD_LIBRARY_PATH=/lib:/usr/lib:/usr/local/lib:/home/travis/opt
 install:
   # Install Jekyll and dependencies
   - bundle install --path .bundle
