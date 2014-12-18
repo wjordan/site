@@ -10,6 +10,7 @@ before_install:
   - ./configure --prefix=/home/travis/opt
   - make && make install
   - export LD_LIBRARY_PATH=/lib:/usr/lib:/usr/local/lib:/home/travis/opt/lib
+  - export PATH=$PATH:/home/travis/opt/include
 install:
   # Install Jekyll and dependencies
   - bundle install --path .bundle
