@@ -1,5 +1,6 @@
 source 'https://rubygems.org'
 
+gem 'webp-ffi', :github => 'webp-ffi'
 gem 'jekyll'
 gem 'jekyll-assets'
 gem 'image_optim'
