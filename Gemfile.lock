@@ -139,7 +139,7 @@ GEM
       execjs (>= 0.3.0)
       json (>= 1.8.0)
     unicode (0.4.4.1)
-    webp-ffi (0.2.4)
+    webp-ffi (0.2.5)
       ffi (>= 1.9.0)
       ffi-compiler (>= 0.1.2)
     yajl-ruby (1.1.0)
