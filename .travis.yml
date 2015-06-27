@@ -4,17 +4,17 @@ cache: bundler
 sudo: false
 bundler_args: --without development --deployment
 before_install:
-  - wget http://downloads.webmproject.org/releases/webp/libwebp-0.4.2.tar.gz
-  - tar xvzf libwebp-0.4.2.tar.gz
-  - cd libwebp-0.4.2
-  - ./configure --prefix=/home/travis/opt
+  - wget http://downloads.webmproject.org/releases/webp/libwebp-0.4.3.tar.gz
+  - tar xvzf libwebp-0.4.3.tar.gz
+  - cd libwebp-0.4.3
+  - ./configure --prefix=$HOME/opt
   - make && make install
-  - export LD_LIBRARY_PATH=/lib:/usr/lib:/usr/local/lib:/home/travis/opt/lib
-  - export PATH=$PATH:/home/travis/opt/include
-  - export INCLUDE=$INCLUDE:/home/travis/opt/include
-  - export CPATH=$CPATH:/home/travis/opt/include
-  - export LDFLAGS=-L/home/travis/opt/lib
-  - export LD_FLAGS=-L/home/travis/opt/lib
+  - export LD_LIBRARY_PATH=/lib:/usr/lib:/usr/local/lib:$HOME/opt/lib
+  - export PATH=$PATH:$HOME/opt/include
+  - export INCLUDE=$INCLUDE:$HOME/opt/include
+  - export CPATH=$CPATH:$HOME/opt/include
+  - export LDFLAGS=-L$HOME/opt/lib
+  - export LD_FLAGS=-L$HOME/opt/lib
 install:
   # Install Jekyll and dependencies
   - bundle install --path .bundle
