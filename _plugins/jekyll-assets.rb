@@ -40,6 +40,9 @@ end
 require "image_optim"
 image_optim = ImageOptim.new(
     {
+        :allow_lossy => true,
+        :svgo => false,
+        :pngout => false,
         :pngquant => {:quality => 70..85},
         :jpegrecompress => {:quality => 0},
         :jpegoptim => {:max_quality => 90}

@@ -7,9 +7,11 @@ s3_bucket: <%= ENV['S3_SITE_BUCKET'] %>
 
 # site: path-to-your-website
 
-max_age:
-  "assets/*": 31536000 # 1 year = max
-  "*": 0 # s3_website treats 0 as 'no-cache'
+index_document: index.html
+
+cache_control:
+  "assets/*": public, max-age=31536000 # Cache fingerprinted assets indefinitely (31536000 seconds = 1 year = max)
+  "*": public, max-age=3600, s-maxage=31536000 # 1-hour browser cache; CloudFront caches indefinitely until next push
 
 gzip: true
 
@@ -42,19 +44,6 @@ cloudfront_invalidate_root: true
 
 # concurrency_level: 5
 
-# redirects:
-#   index.php: /
-#   about.php: about.html
-#   music-files/promo.mp4: http://www.youtube.com/watch?v=dQw4w9WgXcQ
-
-# routing_rules:
-#   - condition:
-#       key_prefix_equals: blog/some_path
-#     redirect:
-#       host_name: blog.example.com
-#       replace_key_prefix_with: some_new_path/
-#       http_redirect_code: 301
-
 redirects:
   diss: /Ludocapital.pdf
   diss.ch1: /Ludocapital.pdf#nameddest=chapter.1
@@ -65,3 +54,13 @@ redirects:
   cv: /cv.pdf
   cv.src: https://github.com/wjordan/cv
   code: https://github.com/wjordan/
+
+# routing_rules:
+#   - condition:
+#       key_prefix_equals: blog/some_path
+#     redirect:
+#       host_name: blog.example.com
+#       replace_key_prefix_with: some_new_path/
+#       http_redirect_code: 301
+
+treat_zero_length_objects_as_redirects: true
