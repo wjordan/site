@@ -6,12 +6,13 @@
     <title>{% if page.title %}{{ page.title }}{% else %}{{ site.title }}{% endif %}</title>
     <meta name="description" content="{{ site.description }}">
 
-    {% stylesheet main %}
-    <link rel="shortcut icon" type="image/x-icon" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAMAAABEpIrGAAAALVBMVEX///8BAQEdHR0PDw+kpKQ2NjbFxcVvb29MTEzx8fHe3t61tbVfX1+WlpaDg4M+ZdirAAAAz0lEQVR4Ad2PwZKEMAhEu0EIJNH//9zN4MGt0Zn7bh94JfWqJfgTCarqdFlTPFTNTZVmr7UNrDhpCzvZMOgAhKPWDWcOai40CmbtNGpyx5kktxeUm/aqrGapbWXSUBUaRcGb4Kxfd56l0t4FGOOC02/CRvYFKTTBTUhlW5oJD0COm1D3JWw7KHD2u1D3uebCaIYHAUGZDZgM2R+FwTrQF/JRgNCulz4Jx/m5c1zC+C1knGi4BMfXCPt3QRUfkwPobJ+FYPRp+VnYTXUm/lF+ABsxBK2eB/UcAAAAAElFTkSuQmCC" />
-    <link rel="canonical" href="{{ page.url | replace:'index.html','' | prepend: site.baseurl | prepend: site.url }}">
     <script>
         // Picture element HTML5 shiv
         document.createElement( "picture" );
     </script>
     {% javascript application async %}
+
+    {% stylesheet main %}
+    <link rel="shortcut icon" type="image/x-icon" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAMAAABEpIrGAAAALVBMVEX///8BAQEdHR0PDw+kpKQ2NjbFxcVvb29MTEzx8fHe3t61tbVfX1+WlpaDg4M+ZdirAAAAz0lEQVR4Ad2PwZKEMAhEu0EIJNH//9zN4MGt0Zn7bh94JfWqJfgTCarqdFlTPFTNTZVmr7UNrDhpCzvZMOgAhKPWDWcOai40CmbtNGpyx5kktxeUm/aqrGapbWXSUBUaRcGb4Kxfd56l0t4FGOOC02/CRvYFKTTBTUhlW5oJD0COm1D3JWw7KHD2u1D3uebCaIYHAUGZDZgM2R+FwTrQF/JRgNCulz4Jx/m5c1zC+C1knGi4BMfXCPt3QRUfkwPobJ+FYPRp+VnYTXUm/lF+ABsxBK2eB/UcAAAAAElFTkSuQmCC" />
+    <link rel="canonical" href="{{ page.url | replace:'index.html','' | prepend: site.baseurl | prepend: site.url }}">
 </head>
