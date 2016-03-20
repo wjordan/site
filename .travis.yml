@@ -1,9 +1,3 @@
 language: ruby
-rvm: 2.1
 cache: bundler
-sudo: false
-bundler_args: --without development --deployment
-install:
-  # Install Jekyll and dependencies
-  - bundle install --path .bundle
 script: bundle exec jekyll build && bundle exec s3_website push
