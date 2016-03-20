@@ -1,5 +1,5 @@
 # file: _plugins/jekyll-assets.rb
-require "jekyll-assets"
+require 'jekyll-assets'
 
 require 'sprockets-webp'
 Sprockets::WebP.encode_options = { quality: 80, lossless: 0, method: 6, alpha_filtering: 2, alpha_compression: 0, alpha_quality: 100 }
@@ -37,7 +37,7 @@ Sprockets::WebP.encode_options = { quality: 80, lossless: 0, method: 6, alpha_fi
   end
 end
 
-require "image_optim"
+require 'image_optim'
 image_optim = ImageOptim.new(
     {
         :allow_lossy => true,

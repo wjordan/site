@@ -18,4 +18,4 @@ before_install:
 install:
   # Install Jekyll and dependencies
   - bundle install --path .bundle
-script: bundle exec jekyll build #&& bundle exec s3_website push
+script: bundle exec jekyll build && bundle exec s3_website push
