@@ -1,2 +1,2 @@
 require "jekyll-assets"
-require 'jekyll/scholar'
+# require 'jekyll/scholar'

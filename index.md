@@ -1,14 +1,14 @@
 ---
 layout: default
 ---
-#Will Jordan
+# Will Jordan
 [wjordan@uci.edu](mailto:wjordan@uci.edu)
 
-##[About Me](/about/)
+## [About Me](/about/)
 
-##[CV](/cv)
+## [CV](/cv)
 
-##[Portfolio](/portfolio/)
+## [Portfolio](/portfolio/)
 
 For more information about my current work, please [contact me](mailto:wjordan@uci.edu).
 

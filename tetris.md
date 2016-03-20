@@ -7,11 +7,11 @@ permalink: /tetris/
 # Tetris project
 
 <figure>
-  {% image_data tetris-emulation.png %}
+  {% img tetris-emulation.png %}
   <figcaption>Early Tetris prototype for the Elektronika-60 computer, running in the SimH emulator.</figcaption>
 </figure>
 <figure>
-  {% image_data tetris-dos.png %}
+  {% img tetris-dos.png %}
   <figcaption>Early Tetris prototype for the IBM-PC, running in a modern emulator.</figcaption>
 </figure>
 

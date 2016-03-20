@@ -3,18 +3,6 @@ rvm: 2.1
 cache: bundler
 sudo: false
 bundler_args: --without development --deployment
-before_install:
-  - wget http://downloads.webmproject.org/releases/webp/libwebp-0.4.3.tar.gz
-  - tar xvzf libwebp-0.4.3.tar.gz
-  - cd libwebp-0.4.3
-  - ./configure --prefix=$HOME/opt
-  - make && make install
-  - export LD_LIBRARY_PATH=/lib:/usr/lib:/usr/local/lib:$HOME/opt/lib
-  - export PATH=$PATH:$HOME/opt/include
-  - export INCLUDE=$INCLUDE:$HOME/opt/include
-  - export CPATH=$CPATH:$HOME/opt/include
-  - export LDFLAGS=-L$HOME/opt/lib
-  - export LD_FLAGS=-L$HOME/opt/lib
 install:
   # Install Jekyll and dependencies
   - bundle install --path .bundle
