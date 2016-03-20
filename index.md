@@ -2,7 +2,7 @@
 layout: default
 ---
 # Will Jordan
-[wjordan@uci.edu](mailto:wjordan@uci.edu)
+[will.jordan@gmail.com](mailto:will.jordan@gmail.com)
 
 ## [About Me](/about/)
 
@@ -10,7 +10,7 @@ layout: default
 
 ## [Portfolio](/portfolio/)
 
-For more information about my current work, please [contact me](mailto:wjordan@uci.edu).
+For more information about my current work, please [contact me](mailto:will.jordan@gmail.com).
 
 <h1 class="page-heading">Posts</h1>
 
