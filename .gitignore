@@ -1,3 +1,5 @@
 _site
 .idea
 .env
+.claude
+.wrangler
