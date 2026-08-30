@@ -1,0 +1,506 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Slicing Chrome's Zucchini Patches in Half</title>
+<link rel="stylesheet" href="/style.css">
+<link rel="stylesheet" href="/post.css">
+<meta name="description" content="Chrome&#39;s own updater ships a 5.9 MB patch between two stable releases. A prediction-based differ gets the same pair to 2.6 MB, byte-for-byte exact.">
+<link rel="canonical" href="https://willjordan.us/writing/slicing-zucchini-patches/">
+<link rel="alternate" type="application/atom+xml" href="/feed.xml" title="Will Jordan">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="Will Jordan">
+<meta property="og:title" content="Slicing Chrome&#39;s Zucchini Patches in Half">
+<meta property="og:description" content="Chrome&#39;s own updater ships a 5.9 MB patch between two stable releases. A prediction-based differ gets the same pair to 2.6 MB, byte-for-byte exact.">
+<meta property="og:url" content="https://willjordan.us/writing/slicing-zucchini-patches/">
+<meta property="article:published_time" content="2026-08-30">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="Slicing Chrome&#39;s Zucchini Patches in Half">
+<meta name="twitter:description" content="Chrome&#39;s own updater ships a 5.9 MB patch between two stable releases. A prediction-based differ gets the same pair to 2.6 MB, byte-for-byte exact.">
+</head>
+<body>
+<div class="site-nav"><p><a href="/">Will Jordan</a> &middot; <a href="/writing/">Writing</a> &middot; <a href="/projects/">Projects</a></div>
+<main>
+<h1>Slicing Chrome's Zucchini patches in half</h1>
+<p class="lede">Chrome's Linux executable is 291 MB. Between two adjacent stable releases, <a href="https://chromium.googlesource.com/chromium/src/+/main/components/zucchini/README.md">Zucchini</a> — the differ inside Chrome's own updater — produces a 5.9 MB patch. This post introduces a tool that produces a 2.6 MB one for the same pair, byte-for-byte exact: the patch is a structural plan the decoder <em>predicts</em> the new binary from, plus a correction for the bytes it got wrong.</p>
+
+<figure class="card">
+<table class="hero-table">
+<thead><tr><th>Method</th><th class="n">Bytes</th><th></th></tr></thead>
+<tbody>
+<tr><td>Full download (xz -9)</td><td class="n">81,816,856</td><td><span class="bar" style="width:100.0%"></span></td></tr>
+<tr><td><a href="https://github.com/jmacd/xdelta">xdelta3</a></td><td class="n">40,102,302</td><td><span class="bar" style="width:49.0%"></span></td></tr>
+<tr><td><a href="https://www.daemonology.net/bsdiff/">bsdiff</a></td><td class="n">18,599,806</td><td><span class="bar" style="width:22.7%"></span></td></tr>
+<tr><td><a href="https://chromium.googlesource.com/chromium/src/+/main/components/zucchini/README.md">Zucchini</a> (xz -9)</td><td class="n">5,889,352</td><td><span class="bar" style="width:7.2%"></span></td></tr>
+<tr class="total"><td><a href="https://github.com/wjordan/presage">presage</a></td><td class="n">2,621,664</td><td><span class="bar" style="width:3.2%"></span></td></tr>
+</tbody></table>
+<figcaption>Chrome <a href="https://dl.google.com/linux/chrome/deb/pool/main/g/google-chrome-stable/google-chrome-stable_151.0.7922.169-1_amd64.deb">151.0.7922.169</a> → <a href="https://dl.google.com/linux/chrome/deb/pool/main/g/google-chrome-stable/google-chrome-stable_151.0.7922.173-1_amd64.deb">.173</a>, Linux x86-64.</figcaption>
+</figure>
+
+<p>This is a prototype measured on one public release pair, not a change to Chrome's updater.</p>
+
+<h2>Why a small change makes a big patch</h2>
+<p>A one-line source edit rarely produces a one-line byte edit. The change is small, but it is diffuse. Functions slide. A call stores the distance to its target, not the target's address. That distance is its <em>displacement</em>, and it has to be re-encoded whenever the two ends moved by different amounts. Pointers change. A sorted table gains one entry and everything after it slides. Unwind records regenerate. <a href="https://clang.llvm.org/docs/UsersManual.html#profile-guided-optimization">Profile-guided optimisation</a> re-lays-out code nobody touched.</p>
+
+<figure class="wide card">
+<figcaption class="head">Seven functions of a small C program, <code>gcc -O1</code>, after adding <code>if (n == 42) return -3;</code> to <code>validate()</code>.</figcaption>
+<div id="cgrid" class="scroll" style="--mw:640px"></div>
+</figure>
+
+<p>A copy-based differ like xdelta3 handles the slide without difficulty; finding moved regions is what those tools do. What they cannot do is know that the blue bytes are a <em>consequence</em> of the slide. Inside a matched region they are mismatches, and the patch has to carry them. Here that is seven bytes. In Chrome's <code>.text</code> there are 8.7 million such displacement fields, and every one whose two ends moved by different amounts changes.</p>
+
+<p>Here is how far each approach gets with that, region by region across the new binary:</p>
+
+<figure class="wide card">
+<div id="posstrip" class="scroll" style="--mw:760px"></div>
+<figcaption>Shade is the share of each region sent as correction, on a log scale; regions with nothing wrong are left unshaded.</figcaption>
+</figure>
+
+    <p>To ship a binary update, the first thing most people reach for is chunk dedup: split both files into blocks, send only the blocks the old
+        file doesn't have. It is how <a href="https://rsync.samba.org/tech_report/">rsync</a>, <a href="https://github.com/systemd/casync">casync</a> and content-addressed stores work, and here it sends 88% of the file,
+        because a block survives only if it is byte-identical and a slid function has a changed displacement every few
+        dozen bytes. Granularity is everything.
+    </p>
+    <p>Both general-purpose differs find the slide at byte granularity, and after that they diverge on what to do about
+        the displacement bytes. xdelta3 copies around them and gets only 6% of the file wrong, yet ships 40 MB, because
+        copying around millions of four-byte holes takes millions of copy instructions, and those are the patch. bsdiff
+        copies through them and is left with 8.7% wrong; those are small differences of large numbers, which is what its
+        diff stream and bzip2 are built for, and the patch is 18.6 MB. Zucchini translates the references inside its
+        copies before it compares, and gets 2.8% wrong plus a list of reference corrections that carry no offsets, so
+        they cannot be placed on the chart above: 5.9 MB. The prediction this post describes is wrong about only 0.6%. The gap between 8.0
+        MB and 1.8 MB is the relocation table (3.8 MB of Zucchini's, none of presage's), then code (2.6 against 1.2), then
+        <code>.rodata</code> (1.2 against 0.3); in <code>.data.rel.ro</code> both are wrong about the same 20,790 bytes.
+    </p>
+
+
+    <p>Executable differencing has been working on exactly this problem for twenty-five years, and the tools that ended up shipping Chrome updates are the direct descendants of that work:</p>
+
+<figure class="wide card">
+<div id="timeline" class="scroll" style="--mw:760px"></div>
+</figure>
+
+<p>Baker, Manber and Muth's <a href="https://robert.muth.org/Papers/1999-exediff.pdf">Exediff</a> (1999) drew the distinction that everything since depends on: <em>primary</em> changes, which come from the edit, and <em>secondary</em> changes, which come from the layout the edit disturbed. Exediff used symbol tables to undo some of the secondary ones, and was tied to one architecture's instruction set.</p>
+<p>Colin Percival's <a href="https://www.daemonology.net/papers/bsdiff.pdf">bsdiff</a> (2003) was built to be platform-independent, and so understood nothing about the file: it aligned old and new with a suffix array, allowed matches to continue <em>through</em> mismatching bytes, and stored the byte-wise difference of the aligned regions, which is mostly zeros and compresses accordingly. bsdiff's insight was that you do not need to <em>understand</em> a second-order change to encode it cheaply; you only need to line the bytes up so the difference is small. On this Chrome pair that is worth a lot: bsdiff aligns all but 1.9 MB of the new file, and its 18.6 MB patch is 16 MB of diff stream. That stream is the 23.6 million bytes that mismatch inside the aligned regions, almost all of them address fields.</p>
+<p>Percival's <a href="https://www.daemonology.net/papers/thesis.pdf">2006 thesis</a> is the fuller treatment. It sharpens the taxonomy into zeroth-order changes (timestamps, build ids), first-order changes (the edit itself, proportional to the source diff) and second-order changes (everything the edit induces), quotes the damage — a single modified line can touch 5–10% of the bytes of an executable — and states the problem in one sentence: delta compression of executables is largely the problem of locating and compactly encoding second-order changes.</p>
+<p>Google then wrote two differs specifically for shipping Chrome updates. <a href="https://www.chromium.org/developers/design-documents/software-updates-courgette/">Courgette</a> (2009) did understand the file: disassemble the x86, replace every address with a label, adjust the labels between versions, and diff the label-level representation. On its published example that took a 704 KB bsdiff patch to 79 KB. The price was a decoder whose correctness depended on disassembling and reassembling faithfully, with a fix-up patch for whatever the model got wrong.</p>
+<p><a href="https://chromium.googlesource.com/chromium/src/+/main/components/zucchini/README.md">Zucchini</a> replaced it in Chrome's updater with a more forgiving design: keep the file as bytes, annotate typed references (relative branches, absolute pointers, relocations), find large equivalent regions between old and new, and translate the references inside them. A missed reference costs a few bytes; it never costs correctness. Zucchini is the baseline for everything that follows.</p>
+<p>Presage keeps Zucchini's safety property and pushes the prediction much further. The patch is a compact <strong>plan</strong> that lets the decoder build a complete, exact-length guess at the new executable from the old one, followed by a <strong>correction</strong> for every byte the guess got wrong. The guess has to be deterministic. It does not have to be right.</p>
+
+<h2>Zucchini, thinly sliced</h2>
+<p>The chart below starts with Zucchini's method rebuilt inside this framework, then takes one slice off at a time: each layer takes something Zucchini sends as bytes and rebuilds it instead. Each bar is the compressed patch, split into the <span class="plan">plan</span> the decoder follows and the <span class="fix">correction</span> for what the plan got wrong.</p>
+
+<figure class="wide card">
+<div id="rungs" class="scroll" style="--mw:760px"></div>
+<figcaption>Zucchini's plan is its equivalence and extra-target streams.</figcaption>
+</figure>
+
+<p>Zucchini's method is three things: an equivalence map (the list of old regions to copy into the new layout, 158,544 of them here, 586 KB compressed); every reference it recognises inside the copies — PC-relative fields in code, absolute pointers in data, the slot address of each relocation entry — translated through that map; and a correction for what is still wrong, one small integer per mistranslated reference and one (offset, byte) pair per wrong byte outside a reference.</p>
+<p>The starting point does the same three things with presage's own coder, and lands at 5.1 MB against Zucchini's 5.9. Its equivalence map costs within 30 bytes of Zucchini's. Of the 0.8 MB between them, about half is coding: the same wrong bytes in <code>.rela.dyn</code> and <code>.text</code> cost 640 KB less in presage's correction format. The other half is two streams Zucchini sends that don't pay off on this pair: 200 KB of corrections for the pointer slots the relocations fill, which end up equally right without them, and a 218 KB list of targets with no old counterpart. Presage saves 250 KB elsewhere: <code>.rodata</code>, <code>.eh_frame</code>, the relocation slot addresses, and Zucchini compressing everything as one stream.</p>
+<p>Every layer after that is a change to the method, and each has to buy its accuracy for less than it costs to describe. The sections below take the layers in the same order; the small chart under each heading marks which one it covers.</p>
+
+<h2>The 26 MB table that isn't bytes</h2>
+<div class="rung"><svg data-rungs="1"></svg><span>relocation addends as pointers, joined on slot address <b class="neg">−1,255,672</b></span></div>
+<p>This is the first change to Zucchini's method, and the biggest single step in the chart: 1.26 MB.</p>
+
+<figure class="wide card">
+<div id="sections" class="scroll" style="--mw:700px"></div>
+<figcaption>Of 796,001 relocation entries present in both releases, <b>four</b> kept the same addend.</figcaption>
+</figure>
+
+<p>Chrome's <code>.rela.dyn</code> holds 1,105,993 <a href="https://refspecs.linuxfoundation.org/elf/x86_64-abi-0.99.pdf">relative relocations</a>. Each record says "at load time, write <em>this address</em> into <em>that slot</em>". When code and data move, both columns change through the whole table, and a byte-level view of it — including Zucchini's — has almost nothing to copy.</p>
+<p>Zucchini treats each entry's slot address as a reference and translates it; the addend it copies as bytes, and its source carries a <code>TODO</code> to handle it. On this table that leaves 1.1 million of 1.1 million addends wrong, 1.77 MB of its patch. The starting point above does the same and pays 1.35 MB. Handling the addend as Zucchini already handles its other references would take its whole patch to 5,263,732, better by 626 KB but still 1.4 MB above the joined layer below.</p>
+<p>The obvious fix is to treat the addend as the pointer it is and translate it the way Zucchini translates its other references: old row to new row through the equivalence map. That gets 11% of addends right and costs 1.07 MB, hardly better than the bytes. The moment one relocation slides past another in sort order, every row after it is compared against the wrong entry, and nothing downstream recovers. What works is a <strong>join</strong>: correct the slot column first, which gives the decoder the exact new slot addresses, then use those slots as keys to match projected old addends to new entries.</p>
+
+<figure class="card">
+<div class="togs"><button class="tog" id="byrow" aria-pressed="true">pair by row</button><button class="tog" id="byslot" aria-pressed="false">join on slot</button></div>
+<div class="join" id="join"></div>
+<figcaption>Illustrative. One slot moves earlier in sort order; paired by row, every entry after it is compared against a neighbour.</figcaption>
+</figure>
+
+<p>Presage regenerates the table column by column: the slot column is a sorted address sequence and is sent as gaps; the addend column is pointers, projected through the <em>address oracle</em> — the decoder’s own answer to "where did the bytes at this old address end up?" — and joined on the rebuilt slots. On Chrome's real table the join takes exact addends from 10.7% of rows to 78.9% with the equivalence map as the only oracle, and the addend column from 1,071,716 compressed bytes to 96,112; once the function map of the next layer resolves the pointers it is 99.19% exact and 15,240 bytes. Across the whole section, sending the table as addresses came out 26× cheaper than correcting the same information as bytes. The entire <code>.rela.dyn</code> plan is 97 KB of the final patch.</p>
+
+<h2>One function, three bytes</h2>
+<div class="rung"><svg data-rungs="2"></svg><span>function map, chosen per function <b class="neg">−611,308</b></span></div>
+<p>Take <code>v8::base::TimeTicks::Now()</code>. Between the two releases it moved 439,328 bytes later in the file. Its body is 98 bytes, and three of them changed:</p>
+
+<figure class="wide card">
+<figcaption class="head">Every byte of <code>v8::base::TimeTicks::Now()</code> in both builds.</figcaption>
+<div id="fngrid" class="scroll" style="--mw:700px"></div>
+<figcaption>The function moved +0x6b420, the PLT stub it calls −0x17220; the displacement (<code>target − next_ip</code>) absorbs both, so <code>e8 3a 2f db 0c</code> becomes <code>e8 fa 08 d3 0c</code> and the decoder recomputes it.</figcaption>
+</figure>
+
+<p>That is nearly all code churn in a release-to-release build: the same instructions with different addresses inside them. Percival's second-order change, at one instruction. A byte differ pays for it in every one of the roughly 925,000 functions in the image.</p>
+<p>The starting point already reproduces those three bytes, most of the time: the equivalences copy the body and the displacement is retargeted through the map. For 139,050 functions — 55 MB of code — it does not, and this layer takes over. It is not that the matcher copied the wrong bytes: nine times in ten the equivalence covering such a function is a single run copied from that function's own old body. What differs is where the displacements inside it end up pointing.</p>
+<p>The plan carries a function map. Chrome's publisher has the unstripped build on both sides, so the encoder knows which old function became which new one; the client receives no symbols, only where each matched body came from and where it belongs. The decoder walks each placed function, decodes its x86, and re-encodes every PC-relative displacement — calls, jumps, RIP-relative loads — against the new addresses. For <code>TimeTicks::Now()</code> that reproduces those three bytes from nothing.</p>
+<p>The map has to be cheap or it cannot pay. Sent as addresses, the map lists where each old body starts, where it lands, both extents, and the 261,104 points where the oracle needs an exact answer. That costs 1.32 MB compressed, more than the layer saves. Encoded against what the decoder already holds it is 256 KB for the same mappings: function starts as indices into the boundary list the decoder derives from Clang's <code>0xcc</code> padding, ends inferred from the next start, correspondence points as indices into the set of old branch targets, and each point's shift as the change from the previous one, which is zero 99.2% of the time and turns a 176 KB column into 4 KB. Anything the decoder can enumerate, the plan names rather than spells out.</p>
+<p>Even at that price, shipped on its own the map is a step backwards. Retargeting every mapped function through it unconditionally makes the patch 3.94 MB, 122 KB worse than the layer before it: the prediction comes out no better than the equivalences' (98.662% of bytes right against 98.668%) and the map costs 256 KB to send. What makes it pay is one bit per function, choosing whether the equivalence copy or the moved old body is the better starting point. Neither wins everywhere. Equivalences preserve the compiler's local layout, including the islands of data it emits between functions; function identity wins when the byte matcher has grabbed the wrong copy of near-identical code, which <a href="https://research.google/pubs/safe-icf-pointer-safe-identical-code-folding-in-gold/">identical-code folding</a> (ICF) makes common.</p>
+
+<figure class="card">
+<figcaption class="head">Every mapped function, by how many bytes each prediction gets wrong.</figcaption>
+<div id="selgrid" class="scroll" style="--mw:500px"></div>
+</figure>
+
+<p>Pointers need one more thing, and this is where the function map pays for itself. A displacement only needs <em>some</em> equivalent destination; a pointer needs the right <em>identity</em>, and ICF means one old address can stand for several logical functions that the new build split apart. Projected through the equivalence map alone, relocation addends come out exact 78.9% of the time; through the function map, with explicit correspondence points for the ambiguous targets, 99.19%, and that column shrinks from 96,112 bytes to 15,240.</p>
+
+
+<h2>Tables the ELF doesn't label</h2>
+<div class="rung"><svg data-rungs="3,4"></svg><span>unwind records · rodata jump tables <b class="neg">−401,536</b></span></div>
+<p><a href="https://refspecs.linuxfoundation.org/LSB_5.0.0/LSB-Core-generic/LSB-Core-generic/ehframechpt.html"><code>.eh_frame</code></a> is the same problem in a smaller section. Each frame record has a PC-relative start address that moves with its function, and the rest of the record usually doesn't. Retarget the address field through the oracle, keep the record, and <code>.eh_frame_hdr</code> — a sorted index over those records — is regenerated rather than patched as a second copy of the same facts.</p>
+<p><code>.rodata</code> is harder because nothing labels its address tables. Clang's switch jump tables are arrays of 32-bit offsets relative to the table's own base, indistinguishable from any other aligned integers. You can still guess: a run of aligned words that all land inside <code>.text</code> when added to the table base is probably a jump table. That test finds 26,746 candidate tables.</p>
+<p>Rewriting all of them made the patch <em>worse</em>. Detection says what a region could be, not whether the rewrite beats the bytes the equivalence layer already supplied. So the encoder tries each candidate against the real target and ships a selection bitmap: 3,559 tables are retargeted, holding 279,412 entries between them, and the rest are left alone. Every later layer works the same way: the model proposes, the encoder measures against the target, and the plan only includes what paid.</p>
+
+<h2>Correcting what can't be rebuilt</h2>
+<div class="rung"><svg data-rungs="5"></svg><span>address-field remap <b class="neg">−180,456</b></span></div>
+<p>After all of the structural layers the decoder has an exact-length prediction that is 99.392% correct. The remaining 0.6% still has shape. Code and data residuals don't want the same encoding: for <code>.text</code> a positional edit list (gap, length, replacement bytes) beat the general matcher; other regions preferred matching. Letting each region pick saved 86 KB for a handful of mode tags. A one-byte opcode fix and a four-byte displacement fix have nothing in common statistically, so bucketing replacement bytes by run length saved another 71 KB, with no signalling at all, because the decoder already knows each run's length.</p>
+<p>The last layer went back to addresses. About a quarter of the wrong <code>.text</code> bytes were four-byte displacement fields that resolved to the wrong place. The decoder can enumerate all 8,681,458 such fields in its own prediction. Where many fields disagree about the same target, the plan corrects the mapping once; the stragglers get a signed per-field delta. The encoder rejects any remap that would break more fields than it fixes. This traded 292 KB of plan for 472 KB of correction, and the share of wrong code bytes inside address fields fell from 24.5% to 1.9%.</p>
+
+<h2>Where the 2.62 MB goes</h2>
+<figure class="card">
+<table>
+<thead><tr><th>Component</th><th class="n">Bytes</th><th class="n">Share</th><th></th></tr></thead>
+<tbody>
+<tr><td><code>.text</code> correction</td><td class="n">1,122,772</td><td class="n">42.8%</td><td><span class="bar fix" style="width:100.0%"></span></td></tr>
+<tr><td>equivalence map</td><td class="n">539,512</td><td class="n">20.6%</td><td><span class="bar" style="width:48.1%"></span></td></tr>
+<tr><td>address-field corrections</td><td class="n">291,952</td><td class="n">11.1%</td><td><span class="bar fix" style="width:26.0%"></span></td></tr>
+<tr><td>function map</td><td class="n">256,300</td><td class="n">9.8%</td><td><span class="bar" style="width:22.8%"></span></td></tr>
+<tr><td><code>.rodata</code> correction</td><td class="n">165,144</td><td class="n">6.3%</td><td><span class="bar fix" style="width:14.7%"></span></td></tr>
+<tr><td><code>.rela.dyn</code> plan</td><td class="n">96,764</td><td class="n">3.7%</td><td><span class="bar" style="width:8.6%"></span></td></tr>
+<tr><td><code>.eh_frame</code> correction</td><td class="n">67,576</td><td class="n">2.6%</td><td><span class="bar fix" style="width:6.0%"></span></td></tr>
+<tr><td>per-function choice bits</td><td class="n">59,152</td><td class="n">2.3%</td><td><span class="bar" style="width:5.3%"></span></td></tr>
+<tr><td>everything else</td><td class="n">22,492</td><td class="n">0.9%</td><td><span class="bar" style="width:2.0%"></span></td></tr>
+<tr class="total"><td>Total</td><td class="n">2,621,664</td><td class="n">100%</td><td></td></tr>
+</tbody></table>
+</figure>
+
+<p>Every layer is verified the same way: replay the plan, apply the correction, compare the 291 MB result to the target byte for byte. Rebuilding the image takes 2.3 seconds. A bad structural guess costs bytes, never correctness. For this pair, rebuilding the second-order changes instead of transmitting them cut an already executable-aware patch in half.</p>
+
+<p>What remains is not an address problem. Nearly half of the final patch is <code>.text</code> correction, and 80% of those wrong bytes sit in about 9,000 functions the compiler resized between the two builds. The <a href="https://chromium.googlesource.com/chromium/src/+log/151.0.7922.169..151.0.7922.173">commit log between the two tags</a> explains the scale: eight bug fixes touching about thirty source files, and six rolls of the Linux PGO profile. Thirty files don't resize 9,000 functions; a new profile does, because it drives inlining and hot/cold splitting across the whole binary. The bytes still to send are mostly the compiler reacting to a profile, not the fixes users are updating for. Predicting that is a different problem from predicting where things landed.</p>
+
+<p class="src">presage is on GitHub at <a href="https://github.com/wjordan/presage">wjordan/presage</a>.</p>
+
+</main>
+
+<div class="tip" id="tip"></div>
+
+<script>
+(function(){
+  const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+  const fmt = n => n.toLocaleString('en-US');
+  const tip = document.getElementById('tip');
+  // Touch has no hover and no mouseleave, so a tapped tooltip would stick where
+  // it was placed -- usually off the right edge, since these strings are long.
+  const coarse = matchMedia('(hover:none), (pointer:coarse)').matches;
+  let tipText = null, gridCur = null;
+  const setText = t => { if(t !== tipText){ tip.textContent = t; tipText = t; } };
+  function hideTip(){ tip.style.opacity = 0; }
+  function showTip(text, x, y){
+    setText(text);
+    tip.classList.remove('pin');
+    tip.style.opacity = 1;
+    const r = tip.getBoundingClientRect(), m = 8;
+    let L = x + 14, T = y - r.height - 14;
+    if(L + r.width > innerWidth - m) L = x - 14 - r.width;   // flip to the left
+    if(L < m) L = m;
+    if(L + r.width > innerWidth - m) L = Math.max(m, innerWidth - m - r.width);
+    if(T < m) T = y + 20;                                     // flip below
+    if(T + r.height > innerHeight - m) T = Math.max(m, innerHeight - m - r.height);
+    tip.style.left = L + 'px'; tip.style.top = T + 'px';
+  }
+  function pinTip(text){
+    setText(text);
+    tip.style.left = ''; tip.style.top = '';
+    tip.classList.add('pin');
+    tip.style.opacity = 1;
+  }
+  function hover(el, text){
+    if(coarse){
+      el.addEventListener('click', e => { e.stopPropagation(); pinTip(text); });
+    } else {
+      el.addEventListener('mousemove', e => showTip(text, e.clientX, e.clientY));
+      el.addEventListener('mouseleave', hideTip);
+    }
+  }
+  if(coarse){
+    document.addEventListener('click', () => { hideTip(); if(gridCur){gridCur(false); gridCur=null;} });
+    addEventListener('scroll', hideTip, {passive:true, capture:true});
+  }
+  const NS='http://www.w3.org/2000/svg';
+  const el=(t,a,parent)=>{const n=document.createElementNS(NS,t);for(const k in a)n.setAttribute(k,a[k]);if(parent)parent.appendChild(n);return n;};
+
+  // [label, total XZ, % bytes correct, plan XZ]
+  const rungs=[
+    ["Zucchini's method, presage's coder",5070636,97.364,666524],
+    ['− relocations joined on slot address',3814964,98.668,762472],
+    ['− function map, chosen per function',3203656,98.916,951408],
+    ['− unwind records',3041356,98.964,951436],
+    ['− rodata jump tables',2802120,99.263,952984],
+    ['− address-field remap',2621664,99.392,1244736],
+  ];
+  const ZUC=5889352, ZUC_PLAN=803728, ZUC_RIGHT=100*(1-8038546/291196232); // equivalences 585,552 + extra targets 218,176 (each xz'd alone)
+
+  // ---------- section-header sparklines ----------
+  function drawSparks(){
+    document.querySelectorAll('svg[data-rungs]').forEach(s=>{
+      s.innerHTML=''; s.setAttribute('viewBox','0 0 72 16');
+      const on=new Set(s.dataset.rungs.split(',').map(Number));
+      const max=rungs[0][1];
+      rungs.forEach((r,i)=>{
+        const h=Math.max(2,Math.sqrt(r[1]/max)*15);
+        const b=el('rect',{x:i*9,y:16-h,width:7,height:h,fill:on.has(i)?css('--plan'):css('--rule')},s);
+        b.appendChild(el('title',{})).textContent=`${r[0]}: ${fmt(r[1])} B`;
+      });
+    });
+  }
+
+  // ---------- timeline ----------
+  const tl=[
+    [1999,'Exediff','https://robert.muth.org/Papers/1999-exediff.pdf'],
+    [2003,'bsdiff','https://www.daemonology.net/papers/bsdiff.pdf'],
+    [2006,'Percival thesis','https://www.daemonology.net/papers/thesis.pdf'],
+    [2009,'Courgette','https://www.chromium.org/developers/design-documents/software-updates-courgette/'],
+    [2017,'Zucchini','https://codereview.chromium.org/2922273002'],
+  ];
+  function drawTimeline(){
+    const host=document.getElementById('timeline'); host.innerHTML='';
+    const W=840,H=92,x0=30,x1=W-30,y=44;
+    const s=el('svg',{viewBox:`0 0 ${W} ${H}`,role:'img','aria-label':'Timeline of executable differencing'},host);
+    const ink=css('--ink'),muted=css('--muted'),rule=css('--rule'),plan=css('--plan');
+    const sx=yr=>x0+(yr-1997)/(2019-1997)*(x1-x0);
+    el('line',{x1:x0,x2:x1,y1:y,y2:y,stroke:rule,'stroke-width':2},s);
+    tl.forEach((t,i)=>{
+      const x=sx(t[0]), up=i%2===0;
+      el('circle',{cx:x,cy:y,r:5,fill:ink},s);
+      const g=el('a',{href:t[3],target:'_blank',rel:'noopener'},s);
+      el('text',{x:x,y:up?y-18:y+26,'font-size':12.5,fill:plan,'text-anchor':'middle','text-decoration':'underline'},g).textContent=t[1];
+      el('text',{x:x,y:up?y-34:y+42,'font-size':11,fill:muted,'text-anchor':'middle'},s).textContent=t[0];
+    });
+  }
+
+  // ---------- rung ladder ----------
+  function drawRungs(){
+    const host=document.getElementById('rungs'); host.innerHTML='';
+    const W=840,rowH=34,top=30,labelW=300,gH=22;
+    const items=[['z','Zucchini',ZUC,ZUC_PLAN],...rungs];
+    const rowY=[]; let yy=top; items.forEach(it=>{rowY.push(yy); yy+=it[0]==='g'?gH:rowH;});
+    const H=yy+8;
+    const s=el('svg',{viewBox:`0 0 ${W} ${H}`,role:'img','aria-label':'Compressed patch after each predictor layer, split into plan and correction, with Zucchini for comparison'},host);
+    const ink=css('--ink'),muted=css('--muted'),rule=css('--rule'),plan=css('--plan'),fix=css('--fix'),paper=css('--paper');
+    const p1x=labelW, p1w=W-labelW-170, maxB=6_000_000, sx=v=>p1x+v/maxB*p1w;
+    el('text',{x:p1x,y:14,'font-size':11,fill:muted,'letter-spacing':'.06em'},s).textContent='COMPRESSED PATCH, MB';
+    const lg=el('g',{},s);
+    el('rect',{x:W-150,y:5,width:10,height:10,fill:plan},lg); el('text',{x:W-136,y:14,'font-size':11,fill:muted},lg).textContent='plan';
+    el('rect',{x:W-92,y:5,width:10,height:10,fill:fix},lg); el('text',{x:W-78,y:14,'font-size':11,fill:muted},lg).textContent='correction';
+    items.forEach((r,k)=>{
+      const y=rowY[k], cy=y+rowH/2;
+      if(r[0]==='g'){el('text',{x:p1x-12,y:y+gH-5,'font-size':10,fill:muted,'text-anchor':'end','letter-spacing':'.06em'},s).textContent=r[1];return;}
+      const isZ=r[0]==='z', isF=false, i=rungs.indexOf(r), isBest=i===rungs.length-1;
+      const label=isZ?r[1]:r[0], total=isZ?r[2]:r[1], planB=isZ?r[3]:r[3], corr=total-planB;
+      el('text',{x:p1x-12,y:cy+4,'font-size':12,fill:ink,'text-anchor':'end','font-weight':isBest?700:400,'font-style':isZ?'italic':'normal'},s).textContent=label;
+      const wp=sx(planB)-p1x, wc=sx(corr)-p1x;
+      const a=el('rect',{x:p1x,y:cy-8,width:Math.max(wp-1,1),height:16,fill:plan,opacity:isZ?.55:1},s);
+      const b=el('rect',{x:p1x+wp+1,y:cy-8,width:Math.max(wc-1,1),height:16,fill:fix,opacity:isZ?.55:1},s);
+      el('rect',{x:p1x+wp+wc-4,y:cy-8,width:4,height:16,rx:2,fill:fix,opacity:isZ?.55:1},s);
+      const tip=`${fmt(total)} B · plan ${fmt(planB)} · correction ${fmt(corr)}`;
+      hover(a,tip); hover(b,tip);
+      const t=el('text',{x:p1x+wp+wc+8,y:cy+4,'font-size':11,fill:ink},s);
+      t.textContent=(total/1e6).toFixed(2)+' MB';
+      const pc=el('text',{x:p1x+wp+wc-8,y:cy+4,'font-size':11,fill:paper,'text-anchor':'end','font-weight':600},s); pc.textContent=(100-(isZ?ZUC_RIGHT:r[2])).toFixed(1)+'%'; hover(pc,tip);
+    });
+  }
+
+
+  // ---------- section map ----------
+  const secs=[['.text',225655845],['.rela.dyn',26546616],['.rodata',23981900],['.data.rel.ro',11760272],['.eh_frame',1159416],['other',291196232-225655845-26546616-23981900-11760272-1159416]];
+  function drawSections(){
+    const host=document.getElementById('sections'); host.innerHTML='';
+    const W=840,H=62,barY=8,barH=34,total=291196232;
+    const s=el('svg',{viewBox:`0 0 ${W} ${H}`,role:'img','aria-label':'Sections of the Chrome executable in file order'},host);
+    const ink=css('--ink'),muted=css('--muted'),fix=css('--fix'),soft=css('--plan-soft'),rule=css('--rule');
+    const X=o=>o/total*W;
+    el('rect',{x:0,y:barY,width:W,height:barH,fill:rule,opacity:.5},s);
+    const fsecs=[['.rela.dyn',0x103a0,0x19511b8],['.rodata',0x1969600,0x16def4c],['.eh_frame',0x3088018,0x11b0f8],['.text',0x31a4000,0xd733c25],['.data.rel.ro',0x108dd670,0xb37290]];
+    fsecs.forEach(([nm,off,len])=>{
+      const x=X(off), w=len/total*W, isR=nm==='.rela.dyn';
+      const r=el('rect',{x:x,y:barY,width:Math.max(w-1,1.5),height:barH,fill:isR?fix:soft},s);
+      hover(r,`${nm}: ${fmt(len)} B (${(len/total*100).toFixed(1)}%)`);
+      const tw=nm.length*6.8+10;
+      if(w>tw){el('text',{x:x+w/2,y:barY+barH/2+4,'font-size':11,fill:isR?'#fff':ink,'text-anchor':'middle'},s).textContent=nm;}
+      else if(nm==='.data.rel.ro'){el('text',{x:x+w,y:barY+barH+16,'font-size':11,fill:muted,'text-anchor':'end'},s).textContent=nm;}
+    });
+  }
+  // selection heatmap: SEL[i][j] = functions with wrong-bytes bin i under the equivalence copy and bin j under the function map; bin 0 = 0, bin k = [2^(k-1), 2^k), last bin open
+  const SEL=[[759214,0,108,264,94,42,37,41,50,48,19,18,11,4,0],[7943,1397,6,10,7,21,20,21,13,4,3,2,1,0,0],[37821,110,3914,34,32,48,78,131,43,23,17,9,2,1,0],[62218,201,573,6912,62,168,281,238,140,75,45,16,3,2,0],[20451,69,247,1530,2249,224,442,703,431,267,189,76,13,3,0],[3941,12,43,175,504,875,337,441,751,606,362,200,61,10,1],[698,0,7,24,56,166,306,253,505,682,527,343,131,35,9],[117,0,0,1,7,15,79,110,133,405,434,294,179,87,24],[24,0,0,0,1,2,21,31,34,89,208,223,124,85,51],[9,0,0,0,0,0,0,1,21,34,91,134,127,81,70],[7,0,0,0,0,0,0,0,1,1,15,54,62,52,67],[0,0,0,0,0,0,0,0,0,0,0,5,21,34,54],[0,0,0,0,0,0,0,0,0,0,0,0,5,9,39],[0,0,0,0,0,0,0,0,0,0,0,0,0,0,16],[0,0,0,0,0,0,0,0,0,0,0,0,0,0,6]];
+  function drawSel(){
+    const host=document.getElementById('selgrid'); host.innerHTML='';
+    const N=SEL.length,cs=22,left=150,bottom=64,top=8,right=8;
+    const W=left+N*cs+right,H=top+N*cs+bottom;
+    const s=el('svg',{viewBox:`0 0 ${W} ${H}`,role:'img','aria-label':'Functions by wrong bytes under the equivalence copy versus the function map'},host);
+    const ink=css('--ink'),muted=css('--muted'),plan=css('--plan'),fix=css('--fix'),paper=css('--paper'),rule=css('--rule');
+    const lab=k=>k===0?'0':k===N-1?`≥${2**(k-1)}`:k===1?'1':`${2**(k-1)}–${2**k-1}`;
+    let mx=0; SEL.forEach(r=>r.forEach(v=>{mx=Math.max(mx,v);}));
+    const X=j=>left+j*cs, Y=i=>top+(N-1-i)*cs;
+    // shade the two decisions: below the diagonal (map wrong < equivalence wrong) the bit is set
+    for(let i=0;i<N;i++)for(let j=0;j<N;j++){
+      const v=SEL[i][j], a=v?0.12+0.88*Math.log(v+1)/Math.log(mx+1):0;
+      const c=j<i?plan:(j>i?fix:ink);
+      el('rect',{x:X(j),y:Y(i),width:cs-1,height:cs-1,fill:rule,opacity:.35},s);
+      if(v){const r=el('rect',{x:X(j),y:Y(i),width:cs-1,height:cs-1,fill:c,opacity:a},s); hover(r,`${fmt(v)} functions · equivalence copy ${lab(i)} wrong, function map ${lab(j)} wrong`);}
+    }
+    for(let k=0;k<N;k++){
+      el('text',{x:X(k)+cs/2,y:top+N*cs+14,'font-size':8.5,fill:muted,'text-anchor':'end',transform:`rotate(-45 ${X(k)+cs/2} ${top+N*cs+14})`},s).textContent=lab(k);
+      el('text',{x:left-6,y:Y(k)+cs/2+3,'font-size':8.5,fill:muted,'text-anchor':'end'},s).textContent=lab(k);
+    }
+    el('text',{x:left+N*cs/2,y:H-4,'font-size':11,fill:ink,'text-anchor':'middle'},s).textContent='wrong bytes, function map';
+    el('text',{x:12,y:top+N*cs/2,'font-size':11,fill:ink,'text-anchor':'middle',transform:`rotate(-90 12 ${top+N*cs/2})`},s).textContent='wrong bytes, equivalence copy';
+    el('text',{x:left+N*cs-6,y:top+N*cs-8,'font-size':11,fill:fix,'text-anchor':'end','font-weight':600},s).textContent='equivalence copy wins';
+    el('text',{x:left+6,y:top+14,'font-size':11,fill:plan,'font-weight':600},s).textContent='function map wins';
+  }
+  function hex(n,w){return (n>>>0).toString(16).padStart(w,'0');}
+
+  // ---------- C example byte grid ----------
+  // [fn, one class per new byte (s=unchanged, f=the added line, d=an address
+  //  re-encoded because its target moved a different distance),
+  //  [byte offset, length, disassembly]]
+  const CB=[
+    ["parse","sssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssss",
+      [[0,4,"endbr64"],[4,3,"movzbl (%rdi),%eax"],[7,3,"lea -0x30(%rax),%edx"],[10,3,"cmp $0x9,%dl"],[13,2,"ja 40119e <parse+0x3e>"],[15,5,"mov $0x0,%edx"],[20,1,"nop"],[21,11,"data16 cs nopw 0x0(%rax,%rax,1)"],[32,3,"lea (%rdx,%rdx,4),%edx"],[35,3,"sub $0x30,%eax"],[38,3,"movsbl %al,%eax"],[41,3,"lea (%rax,%rdx,2),%edx"],[44,4,"add $0x1,%rdi"],[48,3,"movzbl (%rdi),%eax"],[51,3,"lea -0x30(%rax),%ecx"],[54,3,"cmp $0x9,%cl"],[57,2,"jbe 401180 <parse+0x20>"],[59,2,"mov %edx,%eax"],[61,1,"ret"],[62,5,"mov $0x0,%edx"],[67,2,"jmp 40119b <parse+0x3b>"]]],
+    ["validate","sssssssdsssssssdfffffssdssssssssssssssssssssssffffff",
+      [[0,4,"endbr64"],[4,2,"test %edi,%edi"],[6,2,"js 4011c7 <validate+0x22>  ·  78 15 → 78 1a"],[8,6,"cmp $0xf4240,%edi"],[14,2,"jg 4011cd <validate+0x28>  ·  7f 13 → 7f 18"],[16,3,"cmp $0x2a,%edi"],[19,2,"je 4011d3 <validate+0x2e>"],[21,7,"addl $0x1,0x2e5b(%rip) # 40401c <counter>  ·  83 05 60 2e 00 00 01 → 83 05 5b 2e 00 00 01"],[28,5,"mov $0x0,%eax"],[33,1,"ret"],[34,5,"mov $0xffffffff,%eax"],[39,1,"ret"],[40,5,"mov $0xfffffffe,%eax"],[45,1,"ret"],[46,5,"mov $0xfffffffd,%eax"],[51,1,"ret"]]],
+    ["scale","ssssssssdsssssssssssssssssssss",
+      [[0,4,"endbr64"],[4,1,"push %rbx"],[5,2,"mov %edi,%ebx"],[7,5,"call 4011a5 <validate>  ·  e8 cb ff ff ff → e8 c0 ff ff ff"],[12,2,"mov %eax,%edx"],[14,4,"lea 0x1(%rbx,%rbx,2),%eax"],[18,2,"test %edx,%edx"],[20,5,"mov $0x0,%edx"],[25,3,"cmovne %edx,%eax"],[28,1,"pop %rbx"],[29,1,"ret"]]],
+    ["fold","sssssdsssssssssss",
+      [[0,4,"endbr64"],[4,5,"call 401160 <parse>  ·  e8 6b ff ff ff → e8 60 ff ff ff"],[9,2,"mov %eax,%edi"],[11,5,"call 4011d9 <scale>"],[16,1,"ret"]]],
+    ["report","ssssssssssssdsssssssssssssssssssdssssssss",
+      [[0,4,"endbr64"],[4,4,"sub $0x8,%rsp"],[8,2,"mov %edi,%edx"],[10,6,"mov 0x2e04(%rip),%ecx # 40401c <counter>  ·  8b 0d 0f 2e 00 00 → 8b 0d 04 2e 00 00"],[16,5,"mov $0x402004,%esi"],[21,5,"mov $0x2,%edi"],[26,5,"mov $0x0,%eax"],[31,5,"call 401040 <__printf_chk@plt>  ·  e8 1f fe ff ff → e8 14 fe ff ff"],[36,4,"add $0x8,%rsp"],[40,1,"ret"]]],
+    ["run","ssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssss",
+      [[0,4,"endbr64"],[4,2,"push %r12"],[6,1,"push %rbp"],[7,1,"push %rbx"],[8,3,"cmp $0x1,%edi"],[11,2,"jle 401270 <run+0x3f>"],[13,4,"lea 0x8(%rsi),%rbx"],[17,3,"lea -0x2(%rdi),%eax"],[20,5,"lea 0x10(%rsi,%rax,8),%r12"],[25,5,"mov $0x0,%ebp"],[30,3,"mov (%rbx),%rdi"],[33,5,"call 4011f7 <fold>"],[38,2,"add %eax,%ebp"],[40,4,"add $0x8,%rbx"],[44,3,"cmp %r12,%rbx"],[47,2,"jne 40124f <run+0x1e>"],[49,2,"mov %ebp,%edi"],[51,5,"call 401208 <report>"],[56,2,"mov %ebp,%eax"],[58,1,"pop %rbx"],[59,1,"pop %rbp"],[60,2,"pop %r12"],[62,1,"ret"],[63,5,"mov $0x0,%ebp"],[68,2,"jmp 401262 <run+0x31>"]]],
+    ["main","sssssssssssssssssssss",
+      [[0,4,"endbr64"],[4,4,"sub $0x8,%rsp"],[8,5,"call 401231 <run>"],[13,3,"movzbl %al,%eax"],[16,4,"add $0x8,%rsp"],[20,1,"ret"]]],
+  ];
+  function drawGrid(){
+    const host=document.getElementById('cgrid'); host.innerHTML='';
+    const W=640,labelW=76,cw=8,ch=13,rowH=22,top=4;
+    const s=el('svg',{role:'img','aria-label':'Every byte of seven functions after one line is added to validate'},host);
+    const ink=css('--ink'),muted=css('--muted'),rule=css('--rule'),plan=css('--plan'),fix=css('--fix');
+    let y=top;
+    CB.forEach(([fn,cls,ins])=>{
+      el('text',{x:labelW-10,y:y+ch-2,'font-size':11,fill:ink,'text-anchor':'end',
+                 'font-weight':fn==='validate'?700:400},s).textContent=fn+'()';
+      [...cls].forEach((k,i)=>el('rect',{x:labelW+i*cw,y:y,width:cw-1,height:ch,
+        fill:k==='f'?fix:(k==='d'?plan:rule),opacity:k==='s'?.4:1},s));
+      ins.forEach(([off,len,txt])=>{
+        const r=el('rect',{x:labelW+off*cw-1,y:y-1,width:len*cw-1,height:ch+2,fill:'none',
+                           'stroke-width':1.5,stroke:'none','pointer-events':'all'},s);
+        const mark=on=>r.setAttribute('stroke',on?ink:'none');
+        if(coarse) r.addEventListener('click',()=>{if(gridCur)gridCur(false);gridCur=mark;mark(true);});
+        else{ r.addEventListener('mouseenter',()=>mark(true)); r.addEventListener('mouseleave',()=>mark(false)); }
+        hover(r,txt);
+      });
+      y+=rowH;
+    });
+    let lx=labelW;
+    [['unchanged',rule,.4],['the added line',fix,1],['re-encoded address',plan,1]]
+      .forEach(l=>{el('rect',{x:lx,y:y,width:8,height:8,fill:l[1],opacity:l[2]},s);
+        el('text',{x:lx+12,y:y+8,'font-size':10,fill:muted},s).textContent=l[0];
+        lx+=12+l[0].length*6.1+14;});
+    s.setAttribute('viewBox',`0 0 ${W} ${y+16}`);
+  }
+  // v8::base::TimeTicks::Now() in both builds: identical but for the
+  // displacement of its one call. [label, class per byte, [offset, length, disassembly]]
+  const FN=[
+    [".169 @ 3b3d3f0","ssssssssssssssssssdddsssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssss",
+      [[0,1,"push %rbp   55"],[1,3,"mov %rsp,%rbp   48 89 e5"],[4,4,"sub $0x10,%rsp   48 83 ec 10"],[8,4,"lea -0x10(%rbp),%rsi   48 8d 75 f0"],[12,5,"mov $0x1,%edi   bf 01 00 00 00"],[17,5,"call 108f0340 <clock_gettime@plt>   e8 3a 2f db 0c"],[22,2,"test %eax,%eax   85 c0"],[24,2,"jne 3b3d44c   75 42"],[26,4,"mov -0x10(%rbp),%rcx   48 8b 4d f0"],[30,10,"movabs $0x8637bd05af5,%rax   48 b8 f5 5a d0 7b 63 08 00 00"],[40,3,"cmp %rax,%rcx   48 39 c1"],[43,2,"jge 3b3d44f   7d 32"],[45,10,"movabs $0x20c49ba5e353f7cf,%rax   48 b8 cf f7 53 e3 a5 9b c4 20"],[55,4,"imulq -0x8(%rbp)   48 f7 6d f8"],[59,7,"imul $0xf4240,%rcx,%rax   48 69 c1 40 42 0f 00"],[66,3,"mov %rdx,%rcx   48 89 d1"],[69,4,"shr $0x3f,%rcx   48 c1 e9 3f"],[73,4,"sar $0x7,%rdx   48 c1 fa 07"],[77,3,"add %rcx,%rdx   48 01 ca"],[80,3,"add %rdx,%rax   48 01 d0"],[83,3,"inc %rax   48 ff c0"],[86,4,"add $0x10,%rsp   48 83 c4 10"],[90,1,"pop %rbp   5d"],[91,1,"ret   c3"],[92,1,"int3   cc"],[93,2,"ud2   0f 0b"],[95,1,"int3   cc"],[96,2,"ud2   0f 0b"]]],
+    [".173 @ 3ba8810","ssssssssssssssssssdddsssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssss",
+      [[0,1,"push %rbp   55"],[1,3,"mov %rsp,%rbp   48 89 e5"],[4,4,"sub $0x10,%rsp   48 83 ec 10"],[8,4,"lea -0x10(%rbp),%rsi   48 8d 75 f0"],[12,5,"mov $0x1,%edi   bf 01 00 00 00"],[17,5,"call 108d9120 <clock_gettime@plt>   e8 fa 08 d3 0c"],[22,2,"test %eax,%eax   85 c0"],[24,2,"jne 3ba886c   75 42"],[26,4,"mov -0x10(%rbp),%rcx   48 8b 4d f0"],[30,10,"movabs $0x8637bd05af5,%rax   48 b8 f5 5a d0 7b 63 08 00 00"],[40,3,"cmp %rax,%rcx   48 39 c1"],[43,2,"jge 3ba886f   7d 32"],[45,10,"movabs $0x20c49ba5e353f7cf,%rax   48 b8 cf f7 53 e3 a5 9b c4 20"],[55,4,"imulq -0x8(%rbp)   48 f7 6d f8"],[59,7,"imul $0xf4240,%rcx,%rax   48 69 c1 40 42 0f 00"],[66,3,"mov %rdx,%rcx   48 89 d1"],[69,4,"shr $0x3f,%rcx   48 c1 e9 3f"],[73,4,"sar $0x7,%rdx   48 c1 fa 07"],[77,3,"add %rcx,%rdx   48 01 ca"],[80,3,"add %rdx,%rax   48 01 d0"],[83,3,"inc %rax   48 ff c0"],[86,4,"add $0x10,%rsp   48 83 c4 10"],[90,1,"pop %rbp   5d"],[91,1,"ret   c3"],[92,1,"int3   cc"],[93,2,"ud2   0f 0b"],[95,1,"int3   cc"],[96,2,"ud2   0f 0b"]]],
+  ];
+  function drawFn(){
+    const host=document.getElementById('fngrid'); host.innerHTML='';
+    const W=700,labelW=104,cw=6,ch=15,rowH=23,top=4;
+    const s=el('svg',{viewBox:`0 0 ${W} ${top+FN.length*rowH}`,role:'img',
+      'aria-label':'The same function in both builds, differing in three bytes'},host);
+    const ink=css('--ink'),muted=css('--muted'),rule=css('--rule'),plan=css('--plan');
+    let y=top;
+    FN.forEach(([lbl,cls,ins])=>{
+      el('text',{x:labelW-10,y:y+ch-3,'font-size':10,fill:muted,'text-anchor':'end'},s).textContent=lbl;
+      [...cls].forEach((k,i)=>el('rect',{x:labelW+i*cw,y:y,width:cw-1,height:ch,
+        fill:k==='s'?rule:plan,opacity:k==='s'?.4:1},s));
+      ins.forEach(([off,len,txt])=>{
+        const r=el('rect',{x:labelW+off*cw-1,y:y-1,width:len*cw-1,height:ch+2,fill:'none',
+                           'stroke-width':1.5,stroke:'none','pointer-events':'all'},s);
+        const mark=on=>r.setAttribute('stroke',on?ink:'none');
+        if(coarse) r.addEventListener('click',()=>{if(gridCur)gridCur(false);gridCur=mark;mark(true);});
+        else{ r.addEventListener('mouseenter',()=>mark(true)); r.addEventListener('mouseleave',()=>mark(false)); }
+        hover(r,txt);
+      });
+      y+=rowH;
+    });
+  }
+  // ---------- how each differ sees the binary ----------
+  const VIEWS={"rows":[["rsync (4 KB)", "bytes in blocks with no identical block in the old file", [0.96624, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.41008, 0.00564, 0.0, 0.0056, 0.01979, 0.03658, 0.15754, 0.21099, 0.16422, 0.6596, 0.24212, 0.1488, 0.25722, 0.18437, 0.26554, 0.61774, 0.43701, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.99719, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.99719, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.99719, 1.0, 1.0, 1.0, 1.0, 0.99719, 0.99437, 1.0, 0.99719, 0.99437, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.99437, 0.99719, 0.72993, 0.99437, 0.98312, 0.89872, 1.0, 1.0, 0.99437, 0.99719, 1.0, 0.97749, 0.86215, 0.99437, 0.94374, 0.9578, 1.0, 0.99719, 1.0, 1.0, 0.98312, 1.0, 1.0, 1.0, 0.99719, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.98875, 0.99156, 0.99719, 0.99719, 0.99719, 1.0, 1.0, 1.0, 0.95499, 0.98875, 1.0, 0.98875, 0.98312, 0.94374, 0.96905, 0.98031, 1.0, 1.0, 1.0, 0.99156, 1.0, 1.0, 1.0, 1.0, 1.0, 0.99156, 1.0, 1.0, 1.0, 0.99437, 0.99719, 1.0, 1.0, 0.99719, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.98875, 0.99719, 0.99437, 1.0, 1.0, 1.0, 0.99719, 1.0, 1.0, 0.99437, 0.89872, 0.92686, 0.98031, 0.7024, 0.00294, 0.00566, 0.0, 0.0, 0.00013, 0.23899, 0.05057, 0.03122, 0.00234], 257170760, 76429660, "76.4 MB", "librsync delta, xz", 23974, "copy commands", 0, ""],["xdelta3","bytes it sends literally; everything else is copy instructions",[0.06328,0.05206,0.04159,0.05143,0.04086,0.03919,0.04176,0.03116,0.04142,0.03428,0.03299,0.04848,0.03591,0.06391,0.06913,0.05942,0.05561,0.05359,0.0375,0.0,0.0,0.0,4e-05,0.03232,0.35533,0.3444,0.03277,0.16299,0.02289,0.01882,0.03973,0.01676,0.03332,0.04127,0.2008,0.15602,0.09287,0.0801,0.08711,0.07404,0.07562,0.08323,0.08036,0.08091,0.06946,0.064,0.07378,0.06875,0.07514,0.07436,0.07561,0.07827,0.08412,0.08294,0.07254,0.07272,0.07249,0.07762,0.0805,0.07793,0.0812,0.08439,0.07856,0.0797,0.0812,0.08672,0.08419,0.09424,0.08709,0.08844,0.08929,0.08752,0.08763,0.08814,0.09146,0.09005,0.08158,0.07507,0.03186,0.01242,0.01042,0.05176,0.04048,0.03825,0.054,0.04376,0.05256,0.06082,0.04228,0.03412,0.01929,0.04938,0.05134,0.05618,0.05786,0.07195,0.06492,0.05614,0.04482,0.06485,0.04028,0.02807,0.0544,0.07778,0.07714,0.07547,0.07893,0.08043,0.07276,0.07142,0.07371,0.06912,0.0649,0.08292,0.07208,0.08033,0.07526,0.08589,0.07931,0.08944,0.0904,0.08814,0.08147,0.08754,0.09016,0.08265,0.08412,0.03625,0.03916,0.05282,0.066,0.05388,0.06886,0.05868,0.05801,0.03409,0.03399,0.05595,0.05586,0.04113,0.01939,0.02078,0.03858,0.06255,0.06963,0.0714,0.05686,0.08243,0.06618,0.06699,0.05556,0.05847,0.05011,0.06269,0.06942,0.06493,0.06594,0.06759,0.06996,0.07576,0.07261,0.05447,0.07055,0.07416,0.06442,0.0683,0.06289,0.06189,0.0596,0.06373,0.07122,0.07435,0.0544,0.05424,0.06636,0.07681,0.07593,0.06888,0.0709,0.06625,0.07323,0.08247,0.09728,0.09304,0.08342,0.07126,0.09109,0.01066,0.01464,0.02082,0.01984,0.0,0.0,0.0,0.0,0.0,0.06452,0.00229,0.00464,0.0001],18486176,40102302,"40.1 MB","default settings",32533779,"copy instructions and addresses",0,""],["bsdiff","bytes it cannot align, plus mismatches inside aligned regions",[0.24015,0.25366,0.2686,0.27023,0.27627,0.27479,0.27223,0.27616,0.27319,0.27446,0.27786,0.25413,0.27925,0.24574,0.2342,0.25182,0.26308,0.19488,0.07331,0.0,0.0,0.0,7e-05,0.00013,0.00036,0.00944,0.03197,0.40682,0.02508,0.02041,0.05222,0.01698,0.04538,0.06044,0.21637,0.13234,0.13339,0.09602,0.10297,0.09292,0.08539,0.10546,0.10021,0.09357,0.08316,0.06993,0.08828,0.07754,0.08831,0.09361,0.10345,0.09336,0.09811,0.10818,0.08472,0.08549,0.08045,0.09347,0.09214,0.09046,0.10336,0.11503,0.08974,0.09063,0.09357,0.11112,0.11903,0.12004,0.09848,0.0998,0.1094,0.11198,0.10021,0.10469,0.10739,0.10757,0.09334,0.08299,0.03714,0.01257,0.00997,0.07186,0.04353,0.04011,0.05971,0.05222,0.05902,0.06878,0.04663,0.03631,0.02015,0.0528,0.07166,0.07212,0.07441,0.08448,0.07368,0.05773,0.04799,0.07825,0.05033,0.03425,0.06094,0.0906,0.08413,0.08111,0.08661,0.08897,0.08208,0.08025,0.08037,0.07405,0.07879,0.09936,0.08974,0.08953,0.0827,0.09408,0.09301,0.09977,0.09858,0.09685,0.08852,0.0977,0.09875,0.08923,0.08958,0.03844,0.04315,0.05972,0.06949,0.056,0.07187,0.06309,0.06578,0.03513,0.03402,0.06158,0.06164,0.04729,0.02007,0.02193,0.04212,0.07916,0.07481,0.07742,0.06451,0.10151,0.07321,0.07604,0.06818,0.06162,0.05515,0.06587,0.07315,0.07058,0.06848,0.06936,0.06841,0.07438,0.07063,0.0522,0.06766,0.07705,0.06744,0.06707,0.06826,0.07181,0.06543,0.06948,0.07233,0.07311,0.06024,0.05736,0.06991,0.07818,0.07816,0.07231,0.07533,0.07277,0.07601,0.09086,0.10501,0.10207,0.08882,0.07664,0.13726,0.01049,0.01532,0.02208,0.02051,0.0,0.0,0.0,0.0,0.0,0.01148,0.0005,0.00295,0.0001],25453379,18599806,"18.6 MB","bzip2",1261517,"control stream",0,""],["Zucchini","bytes it cannot copy, plus its single-byte corrections; reference corrections are counted separately",[0.12087,0.12944,0.15175,0.1454,0.15153,0.15019,0.14788,0.15141,0.14882,0.14991,0.1543,0.13454,0.15151,0.13674,0.13369,0.1389,0.13208,0.13959,0.05795,0.0,0.0,0.0,0.00011,0.00049,0.00069,0.01263,0.04147,0.41519,0.03362,0.02765,0.07022,0.0237,0.06012,0.0827,0.22718,0.11643,0.02568,0.02629,0.0299,0.0227,0.02275,0.03345,0.02397,0.03003,0.03337,0.01799,0.02517,0.0195,0.03113,0.03877,0.04584,0.02652,0.0229,0.04093,0.01812,0.02526,0.01726,0.02398,0.0177,0.02783,0.01787,0.03065,0.01748,0.01749,0.02058,0.01062,0.02025,0.0247,0.01482,0.01851,0.01516,0.03069,0.01704,0.01312,0.01456,0.01189,0.01312,0.01584,0.0077,0.00285,0.00852,0.0072,0.01054,0.01452,0.01518,0.00756,0.00632,0.00645,0.00282,0.0057,0.00936,0.00563,0.0327,0.02084,0.0073,0.00791,0.01076,0.00657,0.00349,0.00421,0.00186,0.00148,0.00497,0.0041,0.00458,0.00429,0.00483,0.00596,0.00552,0.00726,0.00526,0.00626,0.00887,0.00747,0.01418,0.00758,0.00442,0.00405,0.00609,0.00495,0.00498,0.00576,0.00422,0.00582,0.00589,0.00352,0.0045,0.00761,0.00824,0.00893,0.00958,0.00622,0.00583,0.00491,0.00697,0.00674,0.0086,0.0085,0.01116,0.0088,0.00926,0.00702,0.00702,0.03571,0.00572,0.00536,0.00555,0.00671,0.00508,0.01371,0.00906,0.0064,0.00657,0.00454,0.00331,0.00389,0.00568,0.00669,0.00803,0.00883,0.00757,0.00974,0.00889,0.00785,0.01279,0.00963,0.00334,0.00307,0.00198,0.00187,0.00681,0.00775,0.0055,0.00497,0.00483,0.00441,0.00566,0.00645,0.00514,0.00432,0.00336,0.00361,0.00471,0.00446,0.00292,0.00384,0.0054,0.00201,0.00403,0.00228,0.01523,0.0,0.0,0.0,0.0,0.0,0.01364,0.00051,0.00314,0.0001],8038546,5889352,"5.89 MB","xz",1073559,"equivalences and extra targets",2035614,"1.46 M reference corrections"],["presage","bytes the structural prediction gets wrong",[0.00019,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.01343,0.0,0.0,0.0,0.00011,0.00049,0.00069,0.00664,0.00633,0.12155,0.00349,0.00472,0.02218,0.00622,0.00766,0.00826,0.11443,0.06322,0.02123,0.01748,0.02206,0.01771,0.01678,0.02681,0.01526,0.02106,0.02194,0.01218,0.01856,0.01042,0.0203,0.02654,0.03392,0.01815,0.01148,0.03228,0.01071,0.01914,0.00831,0.01517,0.00868,0.02012,0.00963,0.02098,0.00915,0.00889,0.01142,0.00452,0.01504,0.00859,0.00439,0.00576,0.0049,0.02197,0.00714,0.00318,0.00415,0.00325,0.00585,0.00861,0.00315,0.00281,0.00992,0.00305,0.00049,0.00237,0.00042,0.00014,0.00179,0.00057,0.0,2e-05,3e-05,3e-05,0.02337,0.0162,0.00431,0.0038,0.00232,0.00093,0.00062,0.00063,0.00028,0.00015,0.00185,0.0003,0.00027,0.00038,0.00068,0.00082,0.00218,0.00204,0.00174,0.00037,0.00523,0.00308,0.00995,0.00344,0.00125,0.00077,0.00275,0.00116,0.00059,0.00166,0.0007,0.00077,0.00046,0.0003,0.00081,0.00082,0.00085,0.00053,0.0015,0.00102,0.00085,0.00053,0.00017,3e-05,0.00014,0.00098,0.00036,0.00249,0.0,0.0,0.00047,0.0267,0.00065,0.00098,0.00177,0.00021,0.00091,0.01121,0.00414,0.00391,0.00062,0.00112,0.00047,0.00104,0.00054,0.00089,0.00068,0.00177,0.00068,0.00204,0.00105,0.00079,0.00167,0.0021,0.00041,0.00045,4e-05,5e-05,0.0006,0.00114,0.00038,0.00047,0.00187,0.00047,0.00086,0.00125,0.00137,0.0011,0.00056,0.00046,0.0003,0.00032,0.00039,0.00143,0.00168,0.0,3e-05,0.0,0.00196,0.0,0.0,0.0,0.0,0.0,0.01364,0.00051,0.00314,0.0001],1770401,2621664,"2.62 MB","xz",2967527,"plan",414668,"address-field corrections"]]};
+  function drawStrip(){
+    const host=document.getElementById('posstrip'); host.innerHTML='';
+    const W=840,labelW=120,rightW=250,rowH=26,gap=12,top=22,n=100,total=291196232,stripW=W-labelW-rightW,px=stripW/total;
+    const rows=VIEWS.rows, H=top+rows.length*(rowH+gap)+44;
+    const s=el('svg',{viewBox:`0 0 ${W} ${H}`,role:'img','aria-label':'How each differencing approach sees the Chrome binary, by region'},host);
+    const ink=css('--ink'),ink2=css('--ink2'),muted=css('--muted'),fix=css('--fix'),rule=css('--rule'),plan=css('--plan');
+    const bw=stripW/n, shade=f=>f<=0?0.03:0.03+0.97*Math.min(1,Math.max(0,(Math.log10(f)+2.5)/2.5));
+    el('text',{x:labelW,y:12,'font-size':11,fill:muted,'letter-spacing':'.06em'},s).textContent='CORRECTIONS';
+    el('text',{x:labelW+stripW+4,y:12,'font-size':11,fill:muted,'letter-spacing':'.06em'},s).textContent='PLAN';
+    el('text',{x:W-130,y:12,'font-size':11,fill:muted,'letter-spacing':'.06em','text-anchor':'end'},s).textContent='RAW';
+    el('text',{x:W,y:12,'font-size':11,fill:muted,'letter-spacing':'.06em','text-anchor':'end'},s).textContent='PATCH';
+    rows.forEach((r,ri)=>{
+      const y=top+ri*(rowH+gap);
+      el('text',{x:0,y:y+rowH/2-2,'font-size':12,fill:ink,'font-weight':r[0]==="presage"?700:400},s).textContent=r[0];
+      el('text',{x:0,y:y+rowH/2+10,'font-size':10,fill:muted},s).textContent=(r[3]/1e6).toFixed(1)+' MB ('+(100*r[3]/total).toFixed(1)+'%)';
+      const bins=[]; for(let i=0;i<r[2].length;i+=2) bins.push((r[2][i]+(r[2][i+1]??r[2][i]))/2);
+      bins.forEach((f,i)=>{ const x=labelW+i*bw; const q=el('rect',{x:x,y:y,width:bw+0.3,height:rowH,fill:fix,opacity:shade(f)},s); hover(q,`${r[0]} · ${(i*291.2/n).toFixed(0)}–${((i+1)*291.2/n).toFixed(0)} MB: ${(f*100).toFixed(1)}% of bytes`); });
+      let ax=labelW+stripW+4;
+      if(r[9]>0){const w=Math.max(2,r[9]*px); const c=el('rect',{x:ax,y:y,width:w,height:rowH,fill:fix},s); hover(c,`${r[0]}: ${r[10]}, ${(r[9]/1e6).toFixed(1)} MB`); ax+=w+1;}
+      if(r[7]>0){const w=Math.max(2,r[7]*px); const c=el('rect',{x:ax,y:y,width:w,height:rowH,fill:plan},s); hover(c,`${r[0]}: ${r[8]}, ${(r[7]/1e6).toFixed(1)} MB`);}
+      const raw=r[3]+r[7]+r[9], bold=r[0]==="presage"?700:400;
+      const rt=el('text',{x:W-130,y:y+rowH/2+4,'font-size':13,fill:ink2,'text-anchor':'end','font-weight':bold},s); rt.textContent=(raw/1e6).toFixed(1)+' MB'; hover(rt,`${(r[3]/1e6).toFixed(1)} literal${r[9]?` + ${(r[9]/1e6).toFixed(1)} corrections`:''}${r[7]?` + ${(r[7]/1e6).toFixed(1)} plan`:''} = ${(raw/1e6).toFixed(1)} MB`);
+      el('text',{x:W-124,y:y+rowH/2+4,'font-size':13,fill:muted},s).textContent='→';
+      const pt=el('text',{x:W,y:y+rowH/2+4,'font-size':13,fill:ink,'text-anchor':'end','font-weight':bold},s); pt.textContent=r[5]; hover(pt,`${fmt(r[4])} B, ${r[6]}`);
+    });
+    const by=top+rows.length*(rowH+gap)+2;
+    const secs=[['.rela.dyn',0x103a0,0x19511b8],['.rodata',0x1969600,0x16def4c],['.text',0x31a4000,0xd733c25],['.data.rel.ro',0x108dd670,0xb37290]];
+    secs.forEach(([nm,off,len])=>{const x=labelW+off/total*stripW,w=len/total*stripW;el('line',{x1:x,x2:x+w,y1:by+6,y2:by+6,stroke:ink,'stroke-width':1.5},s);el('line',{x1:x,x2:x,y1:by+2,y2:by+10,stroke:ink,'stroke-width':1.5},s);el('line',{x1:x+w,x2:x+w,y1:by+2,y2:by+10,stroke:ink,'stroke-width':1.5},s);el('text',{x:nm==='.data.rel.ro'?labelW+stripW:x+w/2,y:by+(nm==='.rodata'?36:24),'font-size':11,fill:ink,'text-anchor':nm==='.data.rel.ro'?'end':'middle'},s).textContent=nm;});
+    
+  }
+  // ---------- join demo ----------
+  const oldRows=[[0x1000,0xa00],[0x1008,0xa40],[0x1010,0xb00],[0x1018,0xb20],[0x1020,0xc00],[0x1028,0xc10],[0x1030,0xd00],[0x1038,0xd80]];
+  const SH=0x100; // everything moves by 0x100 in the new image
+  // new: the entry at old slot 0x1030 moved earlier (slot 0x110c) — inserted before 0x1110; one new entry appended
+  const newRows=[[0x1100,0xb00],[0x1108,0xb40],[0x110c,0xe00],[0x1110,0xc00],[0x1118,0xc20],[0x1120,0xd00],[0x1128,0xd10],[0x1130,0xe00],[0x1138,0xe80]];
+  const joinKey={0x1100:0x1000,0x1108:0x1008,0x110c:0x1030,0x1110:0x1010,0x1118:0x1018,0x1120:0x1020,0x1128:0x1028,0x1130:null,0x1138:0x1038};
+  let mode='row';
+  function drawJoin(){
+    const host=document.getElementById('join');
+    let a='<table><thead><tr><th>old slot</th><th>old addend</th></tr></thead><tbody>'+oldRows.map(r=>`<tr><td>${hex(r[0],4)}</td><td>${hex(r[1],4)}</td></tr>`).join('')+'</tbody></table>';
+    let good=0,total=0;
+    let b='<table><thead><tr><th>new slot</th><th>predicted</th><th>actual</th></tr></thead><tbody>';
+    newRows.forEach((r,i)=>{
+      let src=null;
+      if(mode==='row'){src=oldRows[i]||null;} else {const k=joinKey[r[0]];src=k==null?null:oldRows.find(o=>o[0]===k);}
+      const pred=src?src[1]+SH:null; const ok=pred===r[1];
+      total++; if(ok)good++;
+      b+=`<tr><td>${hex(r[0],4)}</td><td class="${pred==null?'new':(ok?'ok':'bad')}">${pred==null?'—':hex(pred,4)}</td><td>${hex(r[1],4)}</td></tr>`;
+    });
+    b+='</tbody></table>';
+    host.innerHTML=a+b+`<div class="sum">${mode==='row'?'paired by row':'joined on slot'}: ${good} of ${total} here · ${mode==='row'?'10.7%':'78.9%'} on the real table</div>`;
+  }
+  const br=document.getElementById('byrow'), bs=document.getElementById('byslot');
+  br.addEventListener('click',()=>{mode='row';br.setAttribute('aria-pressed','true');bs.setAttribute('aria-pressed','false');drawJoin();});
+  bs.addEventListener('click',()=>{mode='slot';bs.setAttribute('aria-pressed','true');br.setAttribute('aria-pressed','false');drawJoin();});
+
+  function drawAll(){drawSparks();drawGrid(); drawFn();drawStrip();drawTimeline();drawRungs();drawSections();drawSel();}
+  drawAll(); drawJoin();
+  if(window.matchMedia){window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change',drawAll);}
+  new MutationObserver(drawAll).observe(document.documentElement,{attributes:true,attributeFilter:['data-theme']});
+})();
+</script>
+
+<div class="site-foot"><p><a href="/writing/">&larr; All writing</a> &middot; <a href="mailto:will.jordan@gmail.com">will.jordan@gmail.com</a> &middot; <a href="https://github.com/wjordan">@wjordan</a> &middot; <a href="/feed.xml">RSS</a></div>
+</body>
+</html>

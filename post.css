@@ -1,0 +1,91 @@
+/* Article styles, layered on style.css.
+   The chart scripts read --plan/--fix/--go/--ink/--ink2/--muted/--rule/--paper
+   at runtime, so those names have to keep existing in both themes. */
+:root{
+  --ink:#1a1a1a; --ink2:#333; --muted:#666; --rule:#d8d8d8; --paper:#fff;
+  --plan:#26619c; --plan-soft:#dde7f1;
+  --fix:#a85f21; --fix-soft:#f2e3d5;
+  --go:#2f7d4f; --ok:#2f7d4f; --ok-soft:#dfece4;
+  --bad:#a8392a; --bad-soft:#f2dcd8;
+  --code-bg:#f0f0f0;
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    --ink:#e6e6e6; --ink2:#d0d0d0; --muted:#9aa0a6; --rule:#333; --paper:#1a1a1a;
+    --plan:#79b8f3; --plan-soft:#1d2c3c;
+    --fix:#d08a4d; --fix-soft:#33261a;
+    --go:#6cb98a; --ok:#6cb98a; --ok-soft:#1d2f24;
+    --bad:#e08070; --bad-soft:#33201d;
+    --code-bg:#1e1e1e;
+  }
+}
+
+body{max-width:none;padding:0}
+main,.site-nav,.site-foot{max-width:70ch;margin:0 auto;padding:0 1rem}
+main{padding-bottom:3rem}
+.site-nav{padding-top:1.5rem}
+.site-foot{padding-top:1rem;padding-bottom:3rem;border-top:1px solid var(--rule)}
+.site-nav,.site-foot{font-size:.875rem}
+
+.lede{color:var(--ink2)}
+.src{margin-top:2rem;padding-top:1rem;border-top:1px solid var(--rule);font-size:.875rem;color:var(--muted)}
+.notes p,.rung{font-size:.875rem;color:var(--muted)}
+.rung{display:flex;align-items:flex-start;gap:.5rem;margin:0 0 1rem}
+.rung svg{width:72px;height:16px;flex:none;margin-top:2px}
+.rung b{color:var(--ink);font-weight:600}
+.rung b.neg{color:var(--bad)}
+p .plan,figcaption .plan{color:var(--plan);font-weight:600}
+p .fix,figcaption .fix{color:var(--fix);font-weight:600}
+code{background:var(--code-bg);padding:1px 4px}
+
+/* figures */
+figure{margin:1.5rem 0}
+.card{border:1px solid var(--rule);padding:1rem}
+.wide{width:min(880px,calc(100vw - 2rem));margin-left:50%;transform:translateX(-50%)}
+figcaption.head{margin:0 0 .75rem}
+svg{display:block;width:100%;height:auto;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+.strip{display:block;width:100%;height:auto}
+.scroll,.tbl{overflow-x:auto;overflow-y:hidden;overscroll-behavior-x:contain}
+.scroll>svg{min-width:var(--mw,700px)}
+
+/* tables */
+table{border-collapse:collapse;width:100%;font-size:.875rem;font-variant-numeric:tabular-nums}
+th,td{padding:.35rem .5rem;border-bottom:1px solid var(--rule);text-align:left;vertical-align:top}
+th{font-weight:600;color:var(--muted);font-size:.8125rem}
+td.n,th.n{text-align:right;white-space:nowrap}
+tr.total td{border-top:1px solid var(--rule);font-weight:700}
+td:last-child{width:45%}
+.hero-table td:first-child{width:40%}
+.bar{height:10px;background:var(--plan);display:inline-block;vertical-align:middle;min-width:2px}
+.bar.fix{background:var(--fix)}
+
+/* comparison figure */
+.join{font-size:.8125rem;display:grid;grid-template-columns:1fr 1fr;gap:1rem;align-items:start;overflow-x:auto}
+.join table td,.join table th{padding:.25rem .5rem}
+.join thead th{white-space:nowrap;vertical-align:bottom}
+.join td.ok{background:var(--ok-soft);color:var(--ok)}
+.join td.bad{background:var(--bad-soft);color:var(--bad)}
+.join td.new{color:var(--muted);font-style:italic}
+.join .sum{grid-column:1/-1;color:var(--ink2);margin-top:.4rem}
+.togs{display:flex;gap:.5rem;margin-bottom:.75rem}
+button.tog{font:inherit;font-size:.8125rem;padding:.25rem .625rem;border:1px solid var(--rule);background:var(--paper);color:var(--ink2);cursor:pointer}
+button.tog[aria-pressed="true"]{background:var(--plan);border-color:var(--plan);color:var(--paper)}
+.ctl{display:grid;grid-template-columns:150px 1fr 130px;gap:.75rem;align-items:center;font-size:.8125rem;color:var(--muted);margin-top:.75rem;padding-top:.75rem;border-top:1px solid var(--rule)}
+.ctl input[type=range]{width:100%;accent-color:var(--plan)}
+.ctl .v{color:var(--ink);text-align:right}
+
+.tip{position:fixed;pointer-events:none;background:var(--ink);color:var(--paper);font:12px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;padding:.4rem .6rem;opacity:0;transition:opacity .08s;z-index:9;max-width:min(340px,calc(100vw - 24px));white-space:normal;overflow-wrap:break-word}
+.tip.pin{left:50%;top:auto;bottom:14px;transform:translateX(-50%);max-width:calc(100vw - 24px);width:max-content}
+@media (prefers-reduced-motion:reduce){.tip{transition:none}}
+
+@media (max-width:640px){
+  .ctl{grid-template-columns:1fr}
+  /* the two tables must stay side by side; reading one against the other is the figure */
+  .join{grid-template-columns:2fr 3fr;gap:.5rem}
+  .join table{font-size:.6875rem}
+  .join table td,.join table th{padding:.2rem .25rem}
+  .join thead th{white-space:normal;font-size:.625rem;line-height:1.25}
+  .wide{width:calc(100vw - 1.25rem)}
+  .card{padding:.625rem}
+  .hero-table td:first-child,td:last-child{width:auto}
+}

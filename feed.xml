@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>Will Jordan</title>
+  <subtitle>Infrastructure, distributed systems, and binary formats.</subtitle>
+  <link href="https://willjordan.us/feed.xml" rel="self"/>
+  <link href="https://willjordan.us/"/>
+  <id>https://willjordan.us/</id>
+  <updated>2026-08-30T00:00:00Z</updated>
+  <author><name>Will Jordan</name><email>will.jordan@gmail.com</email></author>
+
+  <entry>
+    <title>Slicing Chrome's Zucchini Patches in Half</title>
+    <link href="https://willjordan.us/writing/slicing-zucchini-patches/"/>
+    <id>https://willjordan.us/writing/slicing-zucchini-patches/</id>
+    <updated>2026-08-30T00:00:00Z</updated>
+    <published>2026-08-30T00:00:00Z</published>
+    <summary>Chrome's Linux executable is 291 MB. Zucchini, the differ inside Chrome's own updater, produces a 5.9 MB patch between two adjacent stable releases; predicting the new binary instead of diffing it gets the same pair to 2.6 MB, byte-for-byte exact.</summary>
+  </entry>
+
+
+  <entry>
+    <title>Long Live Global Heroku</title>
+    <link href="https://kedge.dev/blog/long-live-global-heroku"/>
+    <id>https://kedge.dev/blog/long-live-global-heroku</id>
+    <updated>2026-08-20T00:00:00Z</updated>
+    <published>2026-08-20T00:00:00Z</published>
+    <summary>Why agent-made software needs an erosion-resistant platform contract, replicated state, and disposable compute. Published on kedge.dev.</summary>
+  </entry>
+
+  <entry>
+    <title>The Serverless Server</title>
+    <link href="https://fly.io/blog/the-serverless-server/"/>
+    <id>https://fly.io/blog/the-serverless-server/</id>
+    <updated>2022-06-30T00:00:00Z</updated>
+    <published>2022-06-30T00:00:00Z</published>
+    <summary>A technical analysis of how AWS Lambda works, and what it implies for the serverless products that come after it. Published on the Fly.io blog.</summary>
+  </entry>
+</feed>
