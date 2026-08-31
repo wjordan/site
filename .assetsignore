@@ -1,0 +1,6 @@
+# Not part of the site. The Workers build checks out the repo into the
+# assets directory, so .git would otherwise be served.
+.git
+.gitignore
+.claude
+.wrangler
