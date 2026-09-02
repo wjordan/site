@@ -58,6 +58,10 @@ td:last-child{width:45%}
 .hero-table td:first-child{width:40%}
 .bar{height:10px;background:var(--plan);display:inline-block;vertical-align:middle;min-width:2px}
 .bar.fix{background:var(--fix)}
+th.key{font-weight:normal;white-space:nowrap}
+.sw{display:inline-block;width:10px;height:10px;background:var(--plan);vertical-align:middle;margin:0 .3rem 0 .6rem}
+.sw:first-child{margin-left:0}
+.sw.fix{background:var(--fix)}
 
 /* comparison figure */
 .join{font-size:.8125rem;display:grid;grid-template-columns:1fr 1fr;gap:1rem;align-items:start;overflow-x:auto}
