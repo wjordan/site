@@ -5,8 +5,17 @@
   <link href="https://willjordan.us/feed.xml" rel="self"/>
   <link href="https://willjordan.us/"/>
   <id>https://willjordan.us/</id>
-  <updated>2026-08-30T00:00:00Z</updated>
+  <updated>2026-09-02T00:00:00Z</updated>
   <author><name>Will Jordan</name><email>will.jordan@gmail.com</email></author>
+
+  <entry>
+    <title>Predicting the Go Linker</title>
+    <link href="https://willjordan.us/writing/predicting-the-go-linker/"/>
+    <id>https://willjordan.us/writing/predicting-the-go-linker/</id>
+    <updated>2026-09-02T00:00:00Z</updated>
+    <published>2026-09-02T00:00:00Z</published>
+    <summary>The Go linker amplifies a one-line edit into megabytes of changed bytes. Nearly all of them are predictable from the old binary, so a patch carries only what the prediction misses: 1.1 KB for a one-line change, 80 KB for a Prometheus release.</summary>
+  </entry>
 
   <entry>
     <title>Slicing Chrome's Zucchini Patches in Half</title>
@@ -14,7 +23,7 @@
     <id>https://willjordan.us/writing/slicing-zucchini-patches/</id>
     <updated>2026-08-30T00:00:00Z</updated>
     <published>2026-08-30T00:00:00Z</published>
-    <summary>Chrome's Linux executable is 291 MB. Zucchini, the differ inside Chrome's own updater, produces a 5.9 MB patch between two adjacent stable releases; predicting the new binary instead of diffing it gets the same pair to 2.6 MB, byte-for-byte exact.</summary>
+    <summary>Chrome's Linux executable is 291 MB. Zucchini, the differ inside Chrome's own updater, produces a 5.9 MB patch between two adjacent stable releases; predicting the new binary instead of diffing it gets the same pair to 2.3 MB, byte-for-byte exact.</summary>
   </entry>
 
 

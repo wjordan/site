@@ -36,7 +36,7 @@ main{padding-bottom:3rem}
 .rung b.neg{color:var(--bad)}
 p .plan,figcaption .plan{color:var(--plan);font-weight:600}
 p .fix,figcaption .fix{color:var(--fix);font-weight:600}
-code{background:var(--code-bg);padding:1px 4px}
+code{background:var(--code-bg);padding:1px 4px;white-space:nowrap}
 
 /* figures */
 figure{margin:1.5rem 0}
