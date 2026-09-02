@@ -23,6 +23,7 @@
 <div class="site-nav"><p><a href="/">Will Jordan</a> &middot; <a href="/writing/">Writing</a> &middot; <a href="/projects/">Projects</a></div>
 <main>
 <h1>Predicting the Go linker</h1>
+<p class="date"><time datetime="2026-09-02">September 2, 2026</time></p>
 <p class="lede">The Go linker amplifies a change. Edit one line and it regenerates half the binary, because most of a Go executable is tables derived from the function list, and the binary keeps that list because the runtime needs it. So nearly all of what changes is predictable from the old binary and a description of the edit, and a patch only has to carry what the prediction misses. A one-line change in a 30 MB program patches in 1.1 KB, against 150 KB for bsdiff. A Prometheus patch release patches in 80 KB, against 2.7 MB.</p>
 
 <figure class="card"><div class="tbl"><table class="hero-table">

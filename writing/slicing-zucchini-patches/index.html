@@ -23,6 +23,7 @@
 <div class="site-nav"><p><a href="/">Will Jordan</a> &middot; <a href="/writing/">Writing</a> &middot; <a href="/projects/">Projects</a></div>
 <main>
 <h1>Slicing Chrome's Zucchini patches in half</h1>
+<p class="date"><time datetime="2026-08-30">August 30, 2026</time></p>
 <p class="lede">Chrome's Linux executable is 291 MB. Between two adjacent stable releases, <a href="https://chromium.googlesource.com/chromium/src/+/main/components/zucchini/README.md">Zucchini</a>, the differ inside Chrome's own updater, produces a 5.9 MB patch. This post introduces a tool that produces a 2.3 MB one for the same pair, byte-for-byte exact: the patch is a structural plan the decoder <em>predicts</em> the new binary from, plus a correction for the bytes it got wrong.</p>
 
 <figure class="card">
