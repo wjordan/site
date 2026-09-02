@@ -19,21 +19,21 @@
 <p><a href="/">Will Jordan</a> &middot; <a href="/writing/">Writing</a> &middot; <a href="/projects/">Projects</a>
 <h1>Projects</h1>
 
+<h2><a href="https://kedge.dev/">Kedge</a></h2>
+<p>A globally distributed serverless compute platform, and my main project. Deploy source code or a container image over SSH or Git and get an auto-scaling HTTPS service with VM-level isolation: each request runs in its own microVM, restored from a snapshot taken mid-<code>listen()</code> in a few milliseconds.
+<p>Write-up: <a href="https://kedge.dev/blog/long-live-global-heroku">Long Live Global Heroku</a>.
+
 <h2><a href="https://github.com/wjordan/syzy">syzy</a></h2>
 <p>Local-first, multi-writer replication for SQLite and Postgres. Durable object-storage backing, scale-to-zero recovery, and no single writer to serialize through.
 
 <h2><a href="https://github.com/wjordan/presage">presage</a></h2>
-<p>A binary patcher built on the idea that most bytes which change between two builds change because something else moved. A patch is a compact plan describing what moved where, from which the decoder rebuilds a full prediction of the new file, plus a correction listing every byte the prediction got wrong. Format knowledge lives in codecs; anything no codec claims falls back to an ordinary delta.
-<p>Write-up: <a href="/writing/slicing-zucchini-patches/">Slicing Chrome&rsquo;s Zucchini Patches in Half</a>.
-
-<h2><a href="https://github.com/wjordan/gossip-mesh">gossip-mesh</a></h2>
-<p>Efficient, reliable, low-latency message broadcast across clusters of 1 to 1000+ nodes, built on QUIC. Related: <a href="https://github.com/wjordan/memberlist-quic">memberlist-quic</a>, a QUIC transport for hashicorp/memberlist, and <a href="https://github.com/wjordan/vivaldi">vivaldi</a>, a standalone Go module for Vivaldi network coordinates.
-
-<h2><a href="https://github.com/wjordan/sqlite-prefetch">sqlite-prefetch</a></h2>
-<p>Prefetches SQLite database pages from remote storage, so a query over a network-backed database stops paying a round trip per page.
+<p>A binary patcher built on the idea that most bytes which change between two builds change because something else moved. A patch is a compact plan describing what moved where, from which the decoder rebuilds a full prediction of the new file, plus a correction listing every byte the prediction got wrong. Format knowledge lives in structure modules, one per toolchain; anything no module claims falls back to an ordinary delta.
+<p>Write-ups: <a href="/writing/slicing-zucchini-patches/">Slicing Chrome&rsquo;s Zucchini Patches in Half</a> and <a href="/writing/predicting-the-go-linker/">Predicting the Go Linker</a>.
 
 <h2>Smaller things</h2>
 <ul>
+<li><a href="https://github.com/wjordan/gossip-mesh">gossip-mesh</a>: low-latency message broadcast across clusters of 1 to 1000+ nodes over QUIC, with <a href="https://github.com/wjordan/memberlist-quic">memberlist-quic</a> and <a href="https://github.com/wjordan/vivaldi">vivaldi</a> alongside it
+<li><a href="https://github.com/wjordan/sqlite-prefetch">sqlite-prefetch</a>: prefetches SQLite pages from remote storage, so a query over a network-backed database stops paying a round trip per page
 <li><a href="https://github.com/wjordan/objectstore">objectstore</a>: object storage interface with filesystem and S3-compatible backends for Go
 <li><a href="https://github.com/wjordan/slopfile">slopfile</a>: reproducible slop as a BuildKit frontend
 <li><a href="https://github.com/wjordan/puma-fork_eval">puma-fork_eval</a>: fork-eval Ruby code in a preloaded application process
