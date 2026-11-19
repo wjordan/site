@@ -24,7 +24,7 @@
 <main>
 <h1>Predicting the Go linker</h1>
 <p class="date"><time datetime="2026-09-02">September 2, 2026</time></p>
-<p class="lede">The Go linker amplifies a change. Edit one line and it regenerates half the binary, because most of a Go executable is tables derived from the function list, and the binary keeps that list because the runtime needs it. So nearly all of what changes is predictable from the old binary and a description of the edit, and a patch only has to carry what the prediction misses. A one-line change in a 30 MB program patches in 1.1 KB, against 150 KB for bsdiff. A Prometheus patch release patches in 80 KB, against 2.7 MB.</p>
+<p class="lede">Edit one line of a Go program and the linker regenerates half the binary, because most of a Go executable is tables derived from the function list. Nearly all of that change is predictable from the old binary, so a patch only has to carry what the prediction misses: 1.1 KB for a one-line change in a 30 MB program, against 150 KB for bsdiff.</p>
 
 <figure class="card"><div class="tbl"><table class="hero-table">
 <thead><tr><th>Method</th><th class="n">Bytes</th><th></th></tr></thead>
@@ -35,41 +35,39 @@
 <tr><td><a href="https://www.daemonology.net/bsdiff/">bsdiff</a></td><td class="n">150,475</td><td><span class="bar" style="width:1.9%"></span></td></tr>
 <tr class="total"><td>presage</td><td class="n">1,100</td><td><span class="bar" style="width:0.3%"></span></td></tr>
 </tbody></table></div>
-<figcaption>One line added to a handler in a 30 MB Go HTTP service, Linux x86-64, stripped, after compression.</figcaption></figure>
+<figcaption>Linux x86-64, stripped. Sizes after compression.</figcaption></figure>
 
-<p><a href="https://github.com/wjordan/presage">Presage</a> is a patcher built on that idea: the patch is a plan the decoder predicts the new binary from, plus a correction for the bytes it got wrong. Applied to Chrome, it <a href="/writing/slicing-zucchini-patches/">halved the patch</a> Chrome's own updater ships for a 291 MB C++ binary. Go suits the idea better than C++, because the linker derives so much more of the file, and derives it by rules simple enough to follow exactly.</p>
+<p><a href="https://github.com/wjordan/presage">Presage</a> is a patcher built on that idea: a patch is a plan the decoder predicts the new binary from, plus a correction for the bytes it gets wrong. It <a href="/writing/slicing-zucchini-patches/">halved the patch</a> Chrome's own updater ships. Go suits it better, because the linker derives more of the file, by rules simple enough to follow exactly.</p>
 
 <h2>What the linker derives</h2>
-<p>A Go program is <a href="https://pkg.go.dev/cmd/link">statically linked</a> and carries the runtime and everything the runtime needs. Less than half of it is code:</p>
+<p>Less than half of a Go binary is code. This is Prometheus 3.13.2, stripped:</p>
 
 <figure class="wide card"><div id="sections" class="scroll" style="--mw:700px"></div>
 </figure>
 
-<p><code>.gopclntab</code> is the <a href="https://docs.google.com/document/d/1lyPIbmsYbXnpNj57a261hgOYVpNRcgydurVQIyZOz_o/pub">runtime's symbol table</a>. It holds every function's name and address, and for every instruction the file and line it came from, how deep the stack is, and which words of the stack hold pointers, packed into tables that functions with identical entries share. Stack traces, panics and the garbage collector all read it, which is why stripping a Go binary leaves it alone: <a href="https://pkg.go.dev/debug/gosym"><code>debug/gosym</code></a> can list every function in a stripped binary. <code>.rodata</code> holds the type descriptors behind reflection, interfaces and the collector's bitmaps, and each descriptor names its element types, methods and name string by offsets from a base address.</p>
+<p><code>.gopclntab</code> is the <a href="https://docs.google.com/document/d/1lyPIbmsYbXnpNj57a261hgOYVpNRcgydurVQIyZOz_o/pub">runtime's symbol table</a>: every function's name and address, and each instruction's source line, stack depth and pointer map. The runtime needs it for stack traces and garbage collection, so <a href="https://pkg.go.dev/debug/gosym">stripping leaves it alone</a>. <code>.rodata</code> holds the type descriptors, which name their methods and element types by offset.</p>
 
-<p>None of it survives a build. The linker lays out the code package by package, with <code>main</code> last, then regenerates every table from the result: sorted by address, packed, and cross-referenced by offset. Grow one function and every function after it moves, every table entry naming an address moves with it, and every offset into a table that grew shifts. A byte-level differ finds the moved code, since finding moved regions is what it does. It cannot know that a 35 MB table is a function of the function list, so it ships the differences.</p>
+<p>None of it survives a build. The <a href="https://pkg.go.dev/cmd/link">linker</a> lays out the code package by package, then regenerates every table from the result. Grow one function and every function after it moves, along with every table entry that names an address. A byte-level differ finds the moved code, but it can't know that a 35 MB table is a function of the function list, so it ships the differences.</p>
 
 <h2>What one line does</h2>
-<p>Add <code>w.Header().Set("X-Foo", "bar")</code> to one HTTP handler of a 30 MB program. The handler grows by 192 bytes, since functions are aligned to 32. It lives in <code>main</code>, the last package in the layout, so only the functions after it move; an edit in a low-level library would move nearly everything. Even so, 14% of the file's bytes change. The compiled edit is under 200 of them.</p>
+<p>Add <code>w.Header().Set("X-Foo", "bar")</code> to one HTTP handler of a 30 MB program. The handler grows by 192 bytes. It lives in <code>main</code>, which the linker lays out last, so only the functions after it move. Still, 14% of the file's bytes change, and under 200 of them are the compiled edit.</p>
 
-<p>Nearly all of the rest is offsets moved by constants. Each function's tables sit together in one shared blob, and a function's record holds the offset where each of its tables starts. The edited function's tables grew by 34 bytes in total:</p>
+<p>Nearly all of the rest is offsets moved by constants. Each function's tables sit in one shared blob, and its record holds the offset of each. The edited function's tables grew by 34 bytes:</p>
 
 <figure class="wide card"><div id="pcblob" class="scroll" style="--mw:700px"></div>
-<figcaption>The edited function's tables in the shared blob, old above and new below, to scale in bytes. Three of them, <code>pcsp</code>, <code>pcfile</code> and <code>pcln</code>, are the ones the function record points at by offset.</figcaption></figure>
+</figure>
 
-<p>Its own record changes in one field, the line table's offset, by the 7 bytes the file table in front of it grew. The record of every function after it changes in four fields: the entry offset by 192, and the three table offsets by 34. Records before the edit are byte-identical.</p>
-
-<p>Two numbers, the 192 and the 34, determine every changed field in every record after the edit, and the same holds for the function index, the stack maps and the type descriptors that name moved code. The linker computed all of it from the new function list. A decoder holding the old binary and the two numbers can predict all of it.</p>
+<p>Every function record after it changes in four fields: the entry offset by 192, and three table offsets by 34. The same two numbers account for every change in the function index, the stack maps and the type descriptors. A decoder holding the old binary and those two numbers can predict all of it.</p>
 
 <h2>Predicting it</h2>
-<p>That is what the Go module does. Its plan is the new function list as a diff against the old one, which functions were added, removed or resized, plus how the data sections shifted. For this pair that is one resized function, and the plan compresses to almost nothing. For Chrome, the equivalent function map had to be built from unstripped binaries on the encoder side and took up a tenth of the patch. A Go binary carries its own.</p>
+<p>That is what presage's Go module does. Its plan is the new function list as a diff against the old: which functions were added, removed or resized, plus how the data sections shifted. Here that is one resized function.</p>
 
-<p>From the plan and the old binary, the decoder predicts the new file in full. It copies each function to its new address, decodes it as x86-64, and re-targets every PC-relative operand through the function map, so calls, jumps and loads point where they should. It regenerates <code>.gopclntab</code>: the function index, every entry offset, and every offset into the shared tables. It walks the type descriptors from the runtime's module data and rewrites every offset in them. It recomputes the ELF headers from the section table it now knows, and the FIPS integrity sum, an HMAC over the crypto module that the runtime checks at startup, from the finished image. An edited function is predicted in pieces that may come from anywhere in the old code, since the compiler emits the same sequences for the same constructs; the encoder tries each candidate and keeps the ones that beat a plain copy.</p>
+<p>From the plan and the old binary, the decoder predicts the whole new file. It copies each function to its new address and re-targets every PC-relative operand. It regenerates <code>.gopclntab</code>, rewrites the offsets in the type descriptors, and recomputes the ELF headers and the FIPS integrity HMAC the runtime checks at startup. Edited functions are predicted in pieces from anywhere in the old code, since the compiler emits the same sequences for the same constructs.</p>
 
-<p>The encoder runs the same prediction, compares it with the real new binary, and ships the difference as a correction. Here that is 330 bytes, nearly all of them the compiled edit and the two build-ID notes, which hash the build's inputs and cannot be derived from its output. With the plan and the container's <a href="https://github.com/BLAKE3-team/BLAKE3">BLAKE3</a> hashes, the patch is 1,100 bytes. A wrong prediction costs bytes, never correctness: the decoder checks the result against the release hash before anything uses it.</p>
+<p>The encoder runs the same prediction and ships its difference from the real binary as a correction: here 330 bytes, mostly the compiled edit and two build-ID notes. With the plan and hashes, the patch is 1,100 bytes. A wrong prediction only costs bytes, because the decoder checks the result's hash before anything uses it.</p>
 
 <h2>A release</h2>
-<p>Prometheus 3.13.1 to 3.13.2 edits two source files and bumps a few dependencies. Fewer than a hundred of the binary's 114 thousand functions are added or resized. The linker amplifies that into a file that differs from its predecessor in 84% of its bytes.</p>
+<p>Prometheus <a href="https://github.com/prometheus/prometheus/releases/tag/v3.13.1">3.13.1</a> to <a href="https://github.com/prometheus/prometheus/releases/tag/v3.13.2">3.13.2</a> edits two source files and bumps a few dependencies. Fewer than a hundred of its 114 thousand functions are added or resized, yet 84% of the file's bytes change.</p>
 
 <figure class="card"><div class="tbl"><table class="hero-table">
 <thead><tr><th>Method</th><th class="n">Bytes</th><th></th></tr></thead>
@@ -80,37 +78,20 @@
 <tr><td>bsdiff</td><td class="n">2,714,204</td><td><span class="bar" style="width:12.5%"></span></td></tr>
 <tr class="total"><td>presage</td><td class="n">80,425</td><td><span class="bar" style="width:0.4%"></span></td></tr>
 </tbody></table></div>
-<figcaption>Prometheus <a href="https://github.com/prometheus/prometheus/releases/tag/v3.13.1">3.13.1</a> → <a href="https://github.com/prometheus/prometheus/releases/tag/v3.13.2">3.13.2</a>, the Linux x86-64 release binaries, stripped, after compression.</figcaption></figure>
-
-<p>Region by region across the new file, this is how much each differ sends:</p>
+<figcaption>Linux x86-64 release binaries, stripped.</figcaption></figure>
 
 <figure class="wide card"><div id="posstrip" class="scroll" style="--mw:760px"></div>
-<figcaption>Shade is the share of each megabyte sent as literal bytes or corrections, on a log scale. The right-hand columns are the raw stream sizes and the compressed patch.</figcaption></figure>
+<figcaption>Shade: share of each megabyte of the new file sent as literal bytes or corrections, log scale.</figcaption></figure>
 
-<p>Chunk dedup, the <a href="https://rsync.samba.org/tech_report/">rsync</a> family, sends most of the file, because a block survives only if it is byte-identical, and slid code has a changed displacement every few dozen bytes. xdelta3 and bsdiff find the slide and then pay for the displacements, one with copy instructions and the other with a <a href="https://www.daemonology.net/papers/thesis.pdf">difference stream</a>. <a href="https://chromium.googlesource.com/chromium/src/+/main/components/zucchini/README.md">Zucchini</a> would translate the references it recognises inside its copies, but it does not recognise a Go binary as something it can disassemble, and patches it raw. The prediction is wrong about a sixth of a percent of the file, and what it misses is the change itself: the new functions, the descriptors and index entries that came with them, and the bodies the compiler resized. Encoding takes four seconds and applying one.</p>
+<p><a href="https://rsync.samba.org/tech_report/">rsync</a> sends most of the file: a block must match byte for byte, and slid code has a changed displacement every few dozen bytes. xdelta3 and bsdiff find the slide and still pay for the displacements. <a href="https://chromium.googlesource.com/chromium/src/+/main/components/zucchini/README.md">Zucchini</a> would translate them, but it doesn't recognise a Go binary and patches it raw. The prediction misses a sixth of a percent of the file: the new functions, their table entries, and the bodies the compiler resized. Encoding takes four seconds, applying one.</p>
 
-<p>The further apart two builds are, the more of the new file is new rather than derived, and the less of it the prediction covers. The next minor release, 3.13.2 to 3.14.0, adds six thousand functions and resizes hundreds more; its patch is 4.8 MB against bsdiff's 9.8 MB, half rather than a thirtieth.</p>
+<p>The advantage shrinks as builds drift apart. The next minor release, 3.14.0, adds six thousand functions and resizes hundreds more; its patch is 4.8 MB against bsdiff's 9.8 MB, half where the patch release was a thirtieth.</p>
 
 <h2>Debug information</h2>
-<p>Upstream ships Prometheus unstripped: 38 MB of symbol tables and DWARF on top of the stripped binary, the DWARF compressed section by section. On that file the same patch release costs bsdiff 28 MB. Compression is a second amplifier. Debug information is full of code addresses, so moving the functions changes it throughout, and a compressed stream whose input changed near its start differs from there to its end.</p>
-
-<figure class="card"><div class="tbl"><table class="hero-table">
-<thead><tr><th>Method</th><th class="n">Bytes</th><th></th></tr></thead>
-<tbody>
-<tr><td>Full download (xz -9)</td><td class="n">46,947,524</td><td><span class="bar" style="width:100%"></span></td></tr>
-<tr><td>xdelta3</td><td class="n">36,570,577</td><td><span class="bar" style="width:77.9%"></span></td></tr>
-<tr><td>Zucchini</td><td class="n">28,115,036</td><td><span class="bar" style="width:59.9%"></span></td></tr>
-<tr><td>bsdiff</td><td class="n">28,108,743</td><td><span class="bar" style="width:59.9%"></span></td></tr>
-<tr class="total"><td>presage</td><td class="n">468,032</td><td><span class="bar" style="width:1%"></span></td></tr>
-</tbody></table></div>
-<figcaption>Prometheus 3.13.1 → 3.13.2, the release binaries as shipped, with debug information: 136 MB, after compression.</figcaption></figure>
-
-<p><a href="https://dwarfstd.org/dwarf5std.html">DWARF</a> is derived the same way the tables are. Its addresses are the function list's addresses, and its cross-references are offsets that move by the size of whatever grew in front of them. So the same prediction applies, one layer up. Presage unwraps the compression, predicts the DWARF from the function map the code layer already built, and compresses the result again with the compressor the linker used. Each layer predicts the structure it understands and hands the rest down, and what reaches the patch is the edit. The patch is 468 KB, against 28 MB for bsdiff. The one-line change with debug information patches in 1.9 KB.</p>
+<p>Upstream ships Prometheus unstripped, with 38 MB of symbol tables and compressed <a href="https://dwarfstd.org/dwarf5std.html">DWARF</a> on top, and there the same patch release costs bsdiff 28 MB. Debug information is full of code addresses, and a compressed stream whose input changes near its start differs from there to its end. But DWARF is derived from the function list too. Presage unwraps the compression, predicts the DWARF from the function map it already built, and recompresses with the linker's compressor. The patch is 468 KB; the one-line change with debug information is 1.9 KB.</p>
 
 <h2>Which linker</h2>
-<p>The patches are small because the prediction is exact, and it is exact because it models one linker: where this release of Go puts each table, how it aligns functions, which compressor it runs over the debug sections. The price is that the model has to follow the linker. Go 1.27 moved the type descriptors into a section of their own and replaced the debug compressor, and a model of 1.26 lays a 1.27 binary down wrong from the first descriptor. Presage was designed as modules for this reason. The Go module reads the <a href="https://pkg.go.dev/debug/buildinfo">Go version the binary carries</a>, models that release, and checks that the file looks the way that linker wrote it; when it cannot, it declines and the generic ELF module that patched Chrome takes over. A release is supported once presage predicts a corpus of its binaries from themselves byte for byte. Today that is Go 1.26 and 1.27.</p>
-
-<p>Every patch above was applied and compared with the target byte for byte. In each case what the patch carries is the edit and the code the compiler made from it. The linker's share, the larger half of the file, is predicted rather than sent.</p>
+<p>The prediction is exact because it models one linker, so it has to follow that linker. Go 1.27 moved the type descriptors into their own section and replaced the debug compressor, and a model of 1.26 gets a 1.27 binary wrong from the first descriptor. The Go module models <a href="https://pkg.go.dev/debug/buildinfo">the release the binary says it is</a>, 1.26 or 1.27 today, and otherwise falls back to the generic ELF module that patched Chrome.</p>
 
 <p class="src">presage is on GitHub at <a href="https://github.com/wjordan/presage">wjordan/presage</a>.</p>
 </main>
