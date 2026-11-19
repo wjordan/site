@@ -22,9 +22,10 @@
 <body>
 <div class="site-nav"><p><a href="/">Will Jordan</a> &middot; <a href="/writing/">Writing</a> &middot; <a href="/projects/">Projects</a></div>
 <main>
-<h1>Slicing Chrome's Zucchini patches in half</h1>
+<h1>Slicing Chrome's Zucchini Patches in Half</h1>
 <p class="date"><time datetime="2026-08-30">August 30, 2026</time></p>
-<p class="lede">Chrome's Linux executable is 291 MB. Between two adjacent stable releases, <a href="https://chromium.googlesource.com/chromium/src/+/main/components/zucchini/README.md">Zucchini</a>, the differ in Chrome's updater, produces a 5.9 MB patch. For the same pair, <a href="https://github.com/wjordan/presage">presage</a> produces a 2.3 MB patch. The decoder follows a plan to predict the new binary, then applies a correction to recover it byte for byte.</p>
+<p class="lede">I've been experimenting with structure-aware compression, and put together a tool called <a href="https://github.com/wjordan/presage">presage</a> that applies the technique to binary patching.</p>
+<p>Chrome's Linux executable is 291 MB. <a href="https://chromium.googlesource.com/chromium/src/+/main/components/zucchini/README.md">Zucchini</a>, the differ in Chrome's release updater, produces a 5.9 MB patch between two recent stable releases. Presage cuts that by more than half to 2.3 MB after a set of LLM-assisted hill-climbing rounds that refined the underlying structure-aware technique.</p>
 
 <figure class="card">
 <table class="hero-table">
@@ -36,86 +37,82 @@
 <tr><td><a href="https://chromium.googlesource.com/chromium/src/+/main/components/zucchini/README.md">Zucchini</a> (xz -9)</td><td class="n">5,889,352</td><td><span class="bar" style="width:7.2%"></span></td></tr>
 <tr class="total"><td><a href="https://github.com/wjordan/presage">presage</a></td><td class="n">2,263,302</td><td><span class="bar" style="width:2.8%"></span></td></tr>
 </tbody></table>
-<figcaption>Chrome <a href="https://dl.google.com/linux/chrome/deb/pool/main/g/google-chrome-stable/google-chrome-stable_151.0.7922.169-1_amd64.deb">151.0.7922.169</a> → <a href="https://dl.google.com/linux/chrome/deb/pool/main/g/google-chrome-stable/google-chrome-stable_151.0.7922.173-1_amd64.deb">.173</a>, Linux x86-64.</figcaption>
+<figcaption>Chrome <a href="https://dl.google.com/linux/chrome/deb/pool/main/g/google-chrome-stable/google-chrome-stable_151.0.7922.169-1_amd64.deb">151.0.7922.169</a> to <a href="https://dl.google.com/linux/chrome/deb/pool/main/g/google-chrome-stable/google-chrome-stable_151.0.7922.173-1_amd64.deb">.173</a>, Linux x86-64.</figcaption>
 </figure>
 
-<h2>Why a small change makes a big patch</h2>
-<p>A one-line source edit doesn't produce a one-line byte edit. Functions slide, and a call stores the distance to its target, its <em>displacement</em>, which has to be re-encoded whenever the two ends move by different amounts. Sorted tables shift, unwind records regenerate, and <a href="https://clang.llvm.org/docs/UsersManual.html#profile-guided-optimization">profile-guided optimisation</a> moves code nobody touched.</p>
+<p>The basic idea is to start with a structured plan that lets the decoder predict the bytes of the new binary from the old one, followed by a correction to recover the byte-exact final result.</p>
+
+<h2>Why a Small Change Makes a Big Patch</h2>
+<p>A small source-code edit rarely produces a similarly small change in a compiled binary. Expand one function, and every function after it slides down in the file. Because each call instruction stores a relative <em>displacement</em> to its target rather than an absolute address, it has to be re-encoded whenever caller and callee shift by different amounts. Other secondary effects work the same way: sorted tables and stack-unwinding records shift from a single insertion or deletion, and <a href="https://clang.llvm.org/docs/UsersManual.html#profile-guided-optimization">profile-guided optimization</a> (PGO) can regenerate different code whenever the profile changes.</p>
 
 <figure class="wide card">
 <figcaption class="head">Seven functions of a small C program, <code>gcc -O1</code>, after adding <code>if (n == 42) return -3;</code> to <code>validate()</code>.</figcaption>
 <div id="cgrid" class="scroll" style="--mw:640px"></div>
 </figure>
 
-<p>A copy-based differ like xdelta3 finds the slid functions easily, but it can't know that the changed displacements follow from the slide, so the patch has to carry them. That is seven bytes in this example, and Chrome's <code>.text</code> has 8.7 million displacement fields.</p>
+<p>A copy-based differ like xdelta3 can track function code shifting to a new offset, but it doesn't know the structure of the relative displacements, so the patch has to carry them. Those seven re-encoded address bytes are only a tiny sample: Chrome's <code>.text</code> code section holds 8.7M such displacements.</p>
 
-<p>The problem is twenty-five years old. The 1999 <a href="https://robert.muth.org/Papers/1999-exediff.pdf">Exediff</a> paper calls the direct effects of an edit <em>primary</em> changes and the changes caused by the resulting layout <em>secondary</em> changes. <a href="https://www.daemonology.net/papers/bsdiff.pdf">bsdiff</a> (2003) encodes secondary changes cheaply without understanding them, by aligning old and new so that their difference is mostly zeros. Chrome's differs reproduce them instead. <a href="https://www.chromium.org/developers/design-documents/software-updates-courgette/">Courgette</a> (2009) disassembles the code, swaps addresses for labels and diffs that, which took its published example from a 704 KB bsdiff patch to 79 KB but needs a decoder that reassembles the code exactly. <a href="https://codereview.chromium.org/2922273002">Zucchini</a> (2017) keeps the file as bytes and translates the references it recognises, so a missed reference costs a few bytes, never correctness.</p>
+<p>This problem has a quarter-century history. The 1999 <a href="https://robert.muth.org/Papers/1999-exediff.pdf">Exediff</a> paper calls the direct effects of an edit <em>primary</em> changes and the changes caused by the resulting layout <em>secondary</em> changes. <a href="https://www.daemonology.net/papers/bsdiff.pdf">bsdiff</a> (2003) encodes secondary changes cheaply without understanding them, and aligns old and new so the bytewise difference is mostly zeros. Chrome's differs use knowledge of the compiled binary structure to reproduce secondary changes instead. <a href="https://www.chromium.org/developers/design-documents/software-updates-courgette/">Courgette</a> (2009) disassembles the code, replaces addresses with labels, and diffs the result, at the cost of a decoder that has to reassemble the binary. <a href="https://codereview.chromium.org/2922273002">Zucchini</a> (2017) keeps the file as bytes and simply translates the references it recognizes, so a missed reference adds a few bytes to a patch instead of a reassembly failure.</p>
+
+<p>Here are the bytes each differ gets wrong in the new Chrome binary, shaded on a log scale.</p>
 
 <figure class="wide card">
-<figcaption class="head">Bytes each differ gets wrong, by position in the new Chrome binary. Shading is logarithmic.</figcaption>
 <div id="posstrip" class="scroll" style="--mw:760px"></div>
 </figure>
 
-<p>xdelta3 gets only 6% of the file wrong and still ships 40 MB, because copying around millions of four-byte displacements takes millions of copy instructions. bsdiff copies through them and gets 8.7% wrong, but as small differences that compress to 18.6 MB. Zucchini translates references before it compares and gets 2.8% wrong; presage gets 0.5%.</p>
+<p>Block-level deduplication like <a href="https://rsync.samba.org/tech_report/">rsync</a> fares worst, because a changed displacement every few dozen bytes breaks nearly every 4 KB block. Byte-level differs handle the slide, then diverge on those changed fields. xdelta3 copies around them, so millions of copy instructions make up most of its patch, while bsdiff copies straight through and relies on bzip2 to compress the small bytewise differences. Zucchini and Presage predict those references before comparing instead.</p>
 
-<p>presage keeps Zucchini's safety property and pushes the prediction further. The patch is a <strong>plan</strong> the decoder follows to build a complete guess at the new executable from the old one, then a <strong>correction</strong> for every byte the guess got wrong. The guess has to be deterministic. It does not have to be right.</p>
+<p>Presage keeps Zucchini's safety property while pushing its structure-aware prediction much further. Every patch splits into a <strong>plan</strong> that guides the decoder from the old binary to a full-length guess at the new one, and a <strong>correction</strong> for every byte that misses.</p>
 
-<h2>Zucchini, thinly sliced</h2>
-<p>The chart starts with Zucchini's method rebuilt in presage, then adds one layer of prediction per row. The encoder tests each layer's changes against the real target and keeps only the ones that make the patch smaller.</p>
+<h2>Zucchini, Thinly Sliced</h2>
+<p>To see where Chrome's 5.9 MB patch actually goes, I started by rebuilding Zucchini's baseline inside Presage. Zucchini uses an <em>equivalence map</em> to copy regions of the old file into the new layout, translates the relative jumps, calls, absolute pointers, and relocation slots it recognizes inside those copies, and writes a correction for everything still wrong. With Presage's tighter correction format, that baseline starts at 5.1 MB.</p>
 
 <figure class="wide card">
 <div id="rungs" class="scroll" style="--mw:760px"></div>
+<figcaption>Bar percentages show the share of the binary predicted wrong.</figcaption>
 </figure>
 
-<p>Zucchini uses an <em>equivalence map</em> to copy regions of the old file into the new layout. It uses the same map to translate the relative branches, absolute pointers and relocation slots it recognises in those regions. The patch carries a correction for the bytes that are still wrong. Rebuilt with presage's cheaper correction format, that is 5.1 MB against Zucchini's 5.9.</p>
+<p>From there, every row on the chart came out of the same loop: inspect what caused the most wrong bytes left in the prediction, propose a structural rule to rebuild it, test it against the real 291 MB target, and keep only what shrinks the final patch. Two big structural wins do most of the work, followed by a few narrower predictors and a better final compressor, until the hill-climbing hits diminishing returns.</p>
 
-<h2>Rebuilding the relocation table</h2>
+<h2>Rebuilding the Relocation Table</h2>
 <div class="rung"><svg data-rungs="1"></svg><span>relocation addends as pointers, joined on slot address <b class="neg">−1,255,672</b></span></div>
-<p>Chrome’s 26 MB <code>.rela.dyn</code> table holds 1.1 million <a href="https://refspecs.linuxfoundation.org/elf/x86_64-abi-0.99.pdf">relative relocations</a>. Each tells the loader to write an address (the <em>addend</em>) into a <em>slot</em>. When code and data move, both columns change down the whole table. Zucchini translates the slot and copies the addend as bytes (there’s a <code>TODO</code> in the source). Every addend comes out wrong, and correcting them accounts for nearly a third of its patch.</p>
-<p>Translating addends as pointers and pairing rows by index gets only one in nine right. When one relocation moves past another in sort order, the rows stop lining up. Presage rebuilds the slot column first, then joins old addends to new entries on the new slot addresses.</p>
+<p>When Linux loads a binary into memory, it walks the <code>.rela.dyn</code> table to fix up pointers whose addresses depend on where the executable landed. Chrome's 26 MB table holds 1.1M <a href="https://refspecs.linuxfoundation.org/elf/x86_64-abi-0.99.pdf">relative relocations</a>, and each row tells the loader to write a target address, the <em>addend</em>, into a <em>slot</em>. When code and data shift, both columns change down the whole table. Zucchini translates the slot and copies the addend as raw bytes (there's still a <code>TODO</code> in its source to handle addends), so nearly every addend misses. Correcting them accounts for almost a third of Zucchini's patch.</p>
+<p>The obvious fix is to translate addends as pointers and pair old and new rows by index, which gets only ~11% right. Because the table is sorted by slot address, the moment a single relocation moves earlier or later, every row after it lines up against the wrong neighbor. Presage rebuilds the sorted slot column first as gaps between consecutive addresses. Then it maps each old entry's slot and addend through the equivalence map and joins them onto the new table by slot address.</p>
 
 <figure class="card">
 <div class="togs"><button class="tog" id="byrow" aria-pressed="true">pair by row</button><button class="tog" id="byslot" aria-pressed="false">join on slot</button></div>
 <div class="join" id="join"></div>
 </figure>
 
-<p>Joined this way, four addends in five come out exactly right, and the next layer gets most of the rest. In the final patch the 26 MB table costs 81 KB.</p>
+<p>Joined on slot address, ~79% of addends come out exact, and the function map in the next step recovers most of the rest. In the final patch, the 26 MB table takes 81 KB.</p>
 
-<h2>One function, three bytes</h2>
+<h2>One Function, Three Bytes</h2>
 <div class="rung"><svg data-rungs="2"></svg><span>function map, chosen per function <b class="neg">−611,308</b></span></div>
-<p>Between the two releases, <code>v8::base::TimeTicks::Now()</code> moved about 440 KB later in the file. Three of its 98 bytes changed, all in the displacement of its one call.</p>
+<p>Between the two releases, <code>v8::base::TimeTicks::Now()</code> moved ~440 KB later in the file. Only 3 of its 98 bytes changed, all in the displacement of its one call.</p>
 
 <figure class="wide card">
 <div id="fngrid" class="scroll" style="--mw:700px"></div>
 </figure>
 
-<p>Across roughly 925,000 functions, the same instructions with different addresses account for most of the churn between the two releases. Zucchini's method gets about one function in seven wrong, because the equivalence map knows where bytes moved, not which function a call was to.</p>
-<p>The plan includes a <em>function map</em> that pairs old functions with their new counterparts. The encoder builds it from the publisher's unstripped builds, and the client never receives symbols. With it, the decoder recomputes every displacement from the functions' new addresses.</p>
-<p>Sent as a list of addresses, the map would cost 1.32 MB, more than it saves. But the decoder can find 99% of the old functions itself, from call targets, relocation targets and the <code>0xcc</code> padding Clang leaves between functions. The plan uses 155 KB to record the functions the decoder misses and what changed between builds.</p>
-<p>Retargeting every function through the map costs more and predicts no better than using the equivalences alone. What makes it pay is one bit per function, choosing the equivalence copy or the moved old body. Equivalences preserve the compiler's local layout, including data islands between functions; the map wins when the byte matcher grabbed the wrong copy of near-identical code, which <a href="https://research.google/pubs/pub36912/">identical-code folding</a> (ICF) makes common.</p>
+<p>Across ~925k functions, the same instructions with different addresses drive most of the churn between releases. Zucchini only matches raw byte ranges, and still gets ~15% of functions wrong.</p>
+<p>Presage adds a <em>function map</em> that pairs old functions with their new counterparts. Built on the publisher's side from unstripped binaries that still carry function names and boundaries, it sends no symbols to the client. With that map, the decoder walks each placed function and recomputes every relative displacement from the new addresses.</p>
+<p>Sent as a plain list of addresses, the map would cost 1.32 MB, which is more than it saves. The trick is that the decoder can find 99% of the old functions on its own from call targets, relocation targets, and the <code>0xcc</code> padding bytes Clang leaves between functions. That leaves the plan spending just 155 KB on the missed functions and what changed between builds.</p>
+<p>Even at 155 KB, retargeting every function unconditionally through the map makes the patch worse, because the prediction is no better than the equivalence copy alone. What makes it pay off is 1 bit per function to pick either the equivalence copy or the function-map prediction. Equivalences preserve the compiler's local layout, including small constant-data blocks placed between functions. The function map wins when the byte matcher grabs the wrong copy of near-identical code under <a href="https://research.google/pubs/pub36912/">identical-code folding</a> (ICF), where the linker merges identical functions into one copy.</p>
 
 <figure class="card">
 <figcaption class="head">Every mapped function, by how many bytes each prediction gets wrong.</figcaption>
 <div id="selgrid" class="scroll" style="--mw:500px"></div>
 </figure>
 
-<p>With the function map, 99% of relocation addends come out exact, up from four in five.</p>
+<p>The function map also fixes the rest of the relocation table. Under ICF, one old address can stand for several logical functions that separate in the new build. Once the map tracks function identity instead of raw byte matches, exact relocation addends jump from ~79% to 99%.</p>
 
-<h2>Tables the ELF doesn't label</h2>
-<div class="rung"><svg data-rungs="3,4"></svg><span>unwind records · rodata jump tables <b class="neg">−401,536</b></span></div>
-<p>Clang compiles a <code>switch</code> to a <a href="https://en.wikipedia.org/wiki/Branch_table">jump table</a> in <code>.rodata</code> that holds offsets to the code for each case. The offsets change when code moves, and the ELF file doesn’t mark the tables. Presage finds 27,000 candidates by looking for runs of values that all point into <code>.text</code>.</p>
-<p>Rewriting every candidate made the patch bigger. For most candidates, the rewrite matched the target no better than the bytes already copied. So the encoder tries each one against the real target and sends a bitmap of the ones to rewrite, about 3,600 of them.</p>
+<h2>The Remaining Layers</h2>
+<div class="rung"><svg data-rungs="3,4,5,6"></svg><span>unwind records · jump tables · field remaps · conditioned coder <b class="neg">−940,354</b></span></div>
+<p>Stack-unwinding records in <a href="https://refspecs.linuxfoundation.org/LSB_5.0.0/LSB-Core-generic/LSB-Core-generic/ehframechpt.html"><code>.eh_frame</code></a> carry relative start addresses that shift with their functions, so Presage retargets them and regenerates the sorted <code>.eh_frame_hdr</code> index instead of patching a second copy. <a href="https://en.wikipedia.org/wiki/Branch_table">Jump tables</a> from <code>switch</code> statements in <code>.rodata</code> are trickier because Linux's ELF format doesn't mark where they live. Scanning <code>.rodata</code> for runs of aligned offsets that land inside <code>.text</code> turns up ~27k candidates. Rewriting all of them made the patch larger, so the encoder tests each candidate against the real binary and sends a bitmap of the ~3.6k tables worth rewriting.</p>
+<p>Even then, ~25% of the wrong bytes left in <code>.text</code> sit inside 4-byte displacement fields. Since the decoder can enumerate all 8.7M of them from its own prediction, the plan remaps targets that many fields disagree on, as long as the remap fixes more fields than it breaks, and sends a signed per-field delta for the rest. Address fields drop from 25% of the wrong code bytes to 2%. Presage uses the same per-field deltas for instruction operands that address retargeting leaves alone, such as immediate constants and stack-slot offsets.</p>
+<p>Until the final layer, the correction stream went to an ordinary compressor that sees replacement bytes without knowing what they replace. A mispredicted displacement usually differs only in its low bytes, and a recompiled instruction usually keeps its opcode. Presage adds a small <a href="https://en.wikipedia.org/wiki/Context_mixing">context-mixing</a> <a href="https://en.wikipedia.org/wiki/Arithmetic_coding">arithmetic coder</a> that predicts each correction byte from the predicted byte underneath it, and also compresses the plan's own streams using each field's structure as context. Per stream, the encoder tries both and keeps the smaller output. The arithmetic coder wins on short replacements, and the general compressor still wins on long runs of recompiled code. Running the arithmetic coder adds ~1.5s of decode time per MB of correction, and brings the final patch to 2.26 MB (38% of Zucchini's).</p>
 
-<h2>Address fields that still miss</h2>
-<div class="rung"><svg data-rungs="5"></svg><span>address-field remap <b class="neg">−180,456</b></span></div>
-<p>About a quarter of the bytes still wrong in <code>.text</code> were four-byte displacement fields that resolved to the wrong place. The decoder can enumerate all 8.7 million such fields in its own prediction, so where many disagree about the same target the plan corrects the mapping once, and the stragglers get a per-field delta. Address fields fell from a quarter of the wrong code bytes to 2%. The same treatment extends to immediates and stack-slot displacements.</p>
-
-<h2>The correction knows the prediction</h2>
-<div class="rung"><svg data-rungs="6"></svg><span>derived map · prediction-conditioned coder · operand fields <b class="neg">−358,362</b></span></div>
-<p>Until now the correction went to an ordinary compressor, which sees replacement bytes and knows nothing about what they replace. The predicted byte can help encode its replacement. A mispredicted displacement usually differs only in its low bytes, and a recompiled instruction usually keeps its opcode.</p>
-<p>The last layer is a small <a href="https://en.wikipedia.org/wiki/Context_mixing">context-mixing</a> <a href="https://en.wikipedia.org/wiki/Arithmetic_coding">arithmetic coder</a> that models each correction byte given the predicted byte underneath it. The encoder picks the smaller result for each stream. The arithmetic coder wins on short replacements. The general compressor wins on long runs of recompiled code, where the predicted bytes offer little help. It costs about a second and a half of decode per megabyte of correction. The final patch is 2.26 MB, or 38% of Zucchini’s.</p>
-
-<h2>What remains</h2>
+<h2>What Remains</h2>
 <figure class="card">
 <table>
 <thead><tr><th>Component</th><th class="n">Bytes</th><th class="n">Share</th><th class="key"><i class="sw"></i>plan <i class="sw fix"></i>correction</th></tr></thead>
@@ -134,14 +131,15 @@
 </tbody></table>
 </figure>
 
-<p>Every layer is verified by replaying the plan, applying the correction and comparing all 291 MB to the target. Applying the final patch takes 2.7 seconds.</p>
+<p>Every layer is verified by replaying the plan, applying the correction, and comparing all 291 MB against the target byte for byte. Applying the final patch takes 2.7s.</p>
 
-<p>More than a third of the final patch is <code>.text</code> correction, and its largest item is 400 KB of recompiled code, mostly in the roughly 9,500 functions the compiler resized between the two builds. The <a href="https://chromium.googlesource.com/chromium/src/+log/151.0.7922.169..151.0.7922.173">commit log between the two tags</a> has eight bug fixes touching about thirty source files, and six rolls of the Linux PGO profile. Thirty files don't resize 9,500 functions; a new profile does, because it drives inlining and hot/cold splitting across the whole binary. Most of what is left to send is the compiler reacting to a profile, not the fixes users are updating for.</p>
+<p>More than a third of the final patch is <code>.text</code> correction, and its largest share is 400 KB of recompiled code, mostly in the ~9.5k functions the compiler resized between the two builds. The <a href="https://chromium.googlesource.com/chromium/src/+log/151.0.7922.169..151.0.7922.173">commit log between the two tags</a> has 8 bug fixes touching ~30 source files, alongside 6 updates to the Linux PGO profile. A new profile drives inlining and hot/cold splitting across the whole binary, which is what resizes those 9.5k functions. Most of the remaining code diff is just PGO recompilation.</p>
 
-<h2>Where to go from here</h2>
+<h2>Where to Go from Here</h2>
 
-<p>I used Chrome because it's what Courgette and Zucchini were built for, but everything presage knows about x86-64 and ELF lives in one structure module, and others can sit beside it. In a typical Go executable, less than half the file is machine code and the rest is metadata the linker derives from it. Presage uses that structure to produce patches dozens of times smaller than a general-purpose differ’s. That is <a href="/writing/predicting-the-go-linker/">the next post</a>.</p>
-<p class="src">presage is on GitHub at <a href="https://github.com/wjordan/presage">wjordan/presage</a>.</p>
+<p>I explored Chrome release-patch optimizations in this post because Courgette and Zucchini were built for Chrome. Everything Presage knows about x86-64 and ELF lives in one structure module, and modules for other toolchains can sit beside it. Go binaries are an even better fit, because less than half of a typical Go executable is machine code and the rest is metadata the linker derives from it. With a module that models the Go linker, Presage produces patches dozens of times smaller than a general-purpose differ's. That is <a href="/writing/predicting-the-go-linker/">the next post</a>.</p>
+<p>I think structure-aware compression suits LLM-assisted hill-climbing performance optimization remarkably well, and having bespoke optimizations like this be cost-effective opens up a range of interesting opportunities for pushing system performance and efficiency beyond what was previously possible with general-purpose, one-size-fits-all algorithms.</p>
+<p class="src">Presage is on GitHub at <a href="https://github.com/wjordan/presage">wjordan/presage</a>.</p>
 
 </main>
 
