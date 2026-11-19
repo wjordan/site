@@ -24,7 +24,7 @@
 <main>
 <h1>Slicing Chrome's Zucchini patches in half</h1>
 <p class="date"><time datetime="2026-08-30">August 30, 2026</time></p>
-<p class="lede">Chrome's Linux executable is 291 MB. Between two adjacent stable releases, <a href="https://chromium.googlesource.com/chromium/src/+/main/components/zucchini/README.md">Zucchini</a>, the differ inside Chrome's own updater, produces a 5.9 MB patch. This post introduces a tool that produces a 2.3 MB one for the same pair, byte-for-byte exact: the patch is a structural plan the decoder <em>predicts</em> the new binary from, plus a correction for the bytes it got wrong.</p>
+<p class="lede">Chrome's Linux executable is 291 MB. Between two adjacent stable releases, <a href="https://chromium.googlesource.com/chromium/src/+/main/components/zucchini/README.md">Zucchini</a>, the differ in Chrome's updater, produces a 5.9 MB patch. <a href="https://github.com/wjordan/presage">presage</a> produces a 2.3 MB one for the same pair, byte-for-byte exact: a plan the decoder uses to <em>predict</em> the new binary, plus a correction for the bytes it got wrong.</p>
 
 <figure class="card">
 <table class="hero-table">
@@ -39,110 +39,81 @@
 <figcaption>Chrome <a href="https://dl.google.com/linux/chrome/deb/pool/main/g/google-chrome-stable/google-chrome-stable_151.0.7922.169-1_amd64.deb">151.0.7922.169</a> → <a href="https://dl.google.com/linux/chrome/deb/pool/main/g/google-chrome-stable/google-chrome-stable_151.0.7922.173-1_amd64.deb">.173</a>, Linux x86-64.</figcaption>
 </figure>
 
-<p>This is a prototype measured on one public release pair, not a change to Chrome's updater.</p>
-
 <h2>Why a small change makes a big patch</h2>
-<p>A one-line source edit rarely produces a one-line byte edit. The change is small, but it is diffuse. Functions slide, and a call stores the distance to its target rather than the target's address. That distance, its <em>displacement</em>, has to be re-encoded whenever the two ends moved by different amounts. A sorted table gains one entry and everything after it slides. Unwind records regenerate. <a href="https://clang.llvm.org/docs/UsersManual.html#profile-guided-optimization">Profile-guided optimisation</a> moves around code nobody touched.</p>
+<p>A one-line source edit doesn't produce a one-line byte edit. Functions slide, and a call stores the distance to its target, its <em>displacement</em>, which has to be re-encoded whenever the two ends move by different amounts. Sorted tables shift, unwind records regenerate, and <a href="https://clang.llvm.org/docs/UsersManual.html#profile-guided-optimization">profile-guided optimisation</a> moves code nobody touched.</p>
 
 <figure class="wide card">
 <figcaption class="head">Seven functions of a small C program, <code>gcc -O1</code>, after adding <code>if (n == 42) return -3;</code> to <code>validate()</code>.</figcaption>
 <div id="cgrid" class="scroll" style="--mw:640px"></div>
 </figure>
 
-<p>A copy-based differ like xdelta3 handles the slide without difficulty; finding moved regions is what those tools do. What they cannot do is know that the re-encoded addresses are a <em>consequence</em> of the slide. Inside a matched region they are mismatches, and the patch has to carry them. Here that is seven bytes. In Chrome's <code>.text</code> there are 8.7 million such displacement fields.</p>
+<p>A copy-based differ like xdelta3 finds the slid functions easily, but it can't know that the changed displacements follow from the slide, so the patch has to carry them. That is seven bytes in this example, and Chrome's <code>.text</code> has 8.7 million displacement fields.</p>
 
-<p>This is a twenty-five-year-old problem, and the differs that ship Chrome updates descend directly from the first papers on it:</p>
-
-<figure class="wide card">
-<div id="timeline" class="scroll" style="--mw:760px"></div>
-</figure>
-
-<p>Baker, Manber and Muth's <a href="https://robert.muth.org/Papers/1999-exediff.pdf">Exediff</a> (1999) drew the distinction that everything since depends on: <em>primary</em> changes, which come from the edit, and <em>secondary</em> changes, which come from the layout the edit disturbed. Exediff undid some of the secondary ones with symbol tables and knowledge of one instruction set. Colin Percival's <a href="https://www.daemonology.net/papers/bsdiff.pdf">bsdiff</a> (2003) went the other way and understood nothing about the file: it aligns old and new with a suffix array, lets matches run <em>through</em> mismatching bytes, and stores the difference of the aligned regions, which is mostly zeros. You do not need to understand a secondary change to encode it cheaply; you only need to line the bytes up so the difference is small. Percival's <a href="https://www.daemonology.net/papers/thesis.pdf">2006 thesis</a> calls these second-order changes, notes that one modified line can touch 5–10% of an executable's bytes, and states the problem in a sentence: delta compression of executables is largely the problem of locating and compactly encoding second-order changes.</p>
-<p>The two differs Google built for Chrome's updater attack that problem directly: instead of lining bytes up so the second-order changes are cheap, understand enough of the file to reproduce them. <a href="https://www.chromium.org/developers/design-documents/software-updates-courgette/">Courgette</a> (2009) disassembles the x86, replaces every address with a label, adjusts the labels between versions, and diffs that. On its published example a 704 KB bsdiff patch became 79 KB, at the price of a decoder whose correctness depended on disassembling and reassembling faithfully. <a href="https://chromium.googlesource.com/chromium/src/+/main/components/zucchini/README.md">Zucchini</a> replaced it with a more forgiving design: keep the file as bytes, annotate typed references (relative branches, absolute pointers, relocations), find large equivalent regions between old and new, and translate the references inside them. A missed reference costs a few bytes; it never costs correctness.</p>
-
-<p>Here is how much each of those designs gets wrong on the Chrome pair, region by region across the new binary:</p>
+<p>The problem is twenty-five years old. The terms come from the <a href="https://robert.muth.org/Papers/1999-exediff.pdf">Exediff</a> paper (1999): <em>primary</em> changes come from the edit, <em>secondary</em> changes from the layout the edit disturbed. <a href="https://www.daemonology.net/papers/bsdiff.pdf">bsdiff</a> (2003) encodes secondary changes cheaply without understanding them, by aligning old and new so that their difference is mostly zeros. Chrome's differs reproduce them instead. <a href="https://www.chromium.org/developers/design-documents/software-updates-courgette/">Courgette</a> (2009) disassembles the code, swaps addresses for labels and diffs that, which took its published example from a 704 KB bsdiff patch to 79 KB but needs a decoder that reassembles the code exactly. <a href="https://codereview.chromium.org/2922273002">Zucchini</a> (2017) keeps the file as bytes and translates the references it recognises, so a missed reference costs a few bytes, never correctness.</p>
 
 <figure class="wide card">
+<figcaption class="head">Bytes each differ gets wrong, by position in the new Chrome binary. Shading is logarithmic.</figcaption>
 <div id="posstrip" class="scroll" style="--mw:760px"></div>
-<figcaption>Shade is the share of each region sent as correction, on a log scale; regions with nothing wrong are left unshaded. Zucchini's reference corrections carry no offsets and are not shown.</figcaption>
 </figure>
 
-<p>Chunk dedup, the first thing most people reach for, does badly here. <a href="https://rsync.samba.org/tech_report/">rsync</a>-style blocks survive only if they are byte-identical, and a slid function has a changed displacement every few dozen bytes, so 88% of the file is sent.</p>
-<p>xdelta3 and bsdiff both find the slide at byte granularity, and then diverge on the displacement bytes. xdelta3 copies around them and gets only 6% of the file wrong, yet ships 40 MB, because copying around millions of four-byte holes takes millions of copy instructions, and those are the patch. bsdiff copies through them and is left with 8.7% wrong; those are small differences of large numbers, which is what its diff stream and bzip2 are built for, and the patch is 18.6 MB. Zucchini translates the references inside its copies before it compares, and gets 2.8% wrong: 5.9 MB. The prediction this post describes gets 0.5% wrong, and the rest of the post is about where that difference comes from.</p>
+<p>xdelta3 gets only 6% of the file wrong and still ships 40 MB, because copying around millions of four-byte displacements takes millions of copy instructions. bsdiff copies through them and gets 8.7% wrong, but as small differences that compress to 18.6 MB. Zucchini translates references before it compares and gets 2.8% wrong; presage gets 0.5%.</p>
 
-<p>Zucchini is the baseline for everything that follows. Presage keeps its safety property and pushes the prediction much further. The patch is a compact <strong>plan</strong> that lets the decoder build a complete, exact-length guess at the new executable from the old one, followed by a <strong>correction</strong> for every byte the guess got wrong. The guess has to be deterministic. It does not have to be right.</p>
+<p>presage keeps Zucchini's safety property and pushes the prediction further. The patch is a <strong>plan</strong> the decoder follows to build a complete guess at the new executable from the old one, then a <strong>correction</strong> for every byte the guess got wrong. The guess has to be deterministic. It does not have to be right.</p>
 
 <h2>Zucchini, thinly sliced</h2>
-<p>The chart below starts with Zucchini's method rebuilt inside this framework, then takes one slice off at a time: each layer rebuilds something Zucchini sends as bytes, until the last, which changes how the remaining bytes are coded. Each bar is the compressed patch, split into the <span class="plan">plan</span> the decoder follows and the <span class="fix">correction</span> for what the plan got wrong.</p>
+<p>The chart starts with Zucchini's method rebuilt in presage, then adds one layer of prediction per row. The encoder tests each layer's changes against the real target and keeps only the ones that make the patch smaller.</p>
 
 <figure class="wide card">
 <div id="rungs" class="scroll" style="--mw:760px"></div>
-<figcaption>Zucchini's plan is its equivalence and extra-target streams.</figcaption>
 </figure>
 
-<p>Zucchini's method is three things: an equivalence map, the list of old regions to copy into the new layout; every reference it recognises inside the copies (PC-relative fields in code, absolute pointers in data, the slot address of each relocation entry), translated through that map; and a correction for what is still wrong.</p>
-<p>The starting point does the same three things with presage's own coder and lands at 5.1 MB against Zucchini's 5.9. The equivalence map costs the same in both; the rest is a cheaper correction format, and two streams Zucchini sends that do not pay for themselves on this pair.</p>
-<p>Every layer after that is a change to the method, and each has to buy its accuracy for less than it costs to describe: the encoder measures each proposal against the real target, and the plan only includes what paid. The sections below take the layers in the same order; the small chart under each heading marks which one it covers.</p>
+<p>Zucchini's method is three things: an <em>equivalence map</em> of old regions to copy into the new layout; every reference it recognises inside the copies (relative branches, absolute pointers, relocation slots), translated through that map; and a correction for what is still wrong. Rebuilt with presage's cheaper correction format, that is 5.1 MB against Zucchini's 5.9.</p>
 
 <h2>Rebuilding the relocation table</h2>
 <div class="rung"><svg data-rungs="1"></svg><span>relocation addends as pointers, joined on slot address <b class="neg">−1,255,672</b></span></div>
-<p>This is the first change to Zucchini's method, and the biggest single step in the chart.</p>
-
-<figure class="wide card">
-<div id="sections" class="scroll" style="--mw:700px"></div>
-<figcaption><code>.rela.dyn</code> within the 291 MB executable.</figcaption>
-</figure>
-
-<p>Chrome's <code>.rela.dyn</code> is 26 MB: 1.1 million <a href="https://refspecs.linuxfoundation.org/elf/x86_64-abi-0.99.pdf">relative relocations</a>, each saying "at load time, write <em>this address</em> into <em>that slot</em>". When code and data move, both columns change through the whole table, and a byte-level view of it, Zucchini's included, has almost nothing to copy.</p>
-<p>Zucchini treats each entry's slot address as a reference and translates it; the addend it copies as bytes, and its source carries a <code>TODO</code> to handle it. On this table that leaves every addend wrong, nearly a third of its patch.</p>
-<p>The obvious fix is to treat the addend as the pointer it is and translate it the way Zucchini translates its other references, old row to new row through the equivalence map. That gets one addend in nine right, hardly better than the bytes: the moment one relocation slides past another in sort order, every row after it is compared against the wrong entry, and nothing downstream recovers. What works is a <strong>join</strong>: correct the slot column first, which gives the decoder the exact new slot addresses, then use those slots as keys to match projected old addends to new entries.</p>
+<p>Chrome's <code>.rela.dyn</code> is 26 MB: 1.1 million <a href="https://refspecs.linuxfoundation.org/elf/x86_64-abi-0.99.pdf">relative relocations</a>, each telling the loader to write an address (the <em>addend</em>) into a <em>slot</em>. When code and data move, both columns change down the whole table. Zucchini translates the slot and copies the addend as bytes (its source carries a <code>TODO</code> for it), which leaves every addend wrong: nearly a third of its patch.</p>
+<p>The obvious fix is to translate the addend as the pointer it is, old row to new row. That gets one addend in nine right: once one relocation slides past another in sort order, every row after it is compared against the wrong entry. What works is a <strong>join</strong>: rebuild the slot column first, then use the exact new slots as keys to match old addends to new entries.</p>
 
 <figure class="card">
 <div class="togs"><button class="tog" id="byrow" aria-pressed="true">pair by row</button><button class="tog" id="byslot" aria-pressed="false">join on slot</button></div>
 <div class="join" id="join"></div>
-<figcaption>Illustrative. One slot moves earlier in sort order; paired by row, every entry after it is compared against a neighbour.</figcaption>
 </figure>
 
-<p>Presage regenerates the table column by column. The slot column is a sorted address sequence and is sent as gaps. The addend column is pointers, projected through the <em>address oracle</em> (the decoder's own answer to where the bytes at an old address ended up) and joined on the rebuilt slots. With the equivalence map as the only oracle the join gets four addends in five exactly right; the next layer gets most of the rest. In the final patch the 26 MB table costs 81 KB, all of it plan: whatever the oracle gets wrong is corrected as an address, never as bytes.</p>
+<p>Joined this way, four addends in five come out exactly right, and the next layer gets most of the rest. In the final patch the 26 MB table costs 81 KB.</p>
 
 <h2>One function, three bytes</h2>
 <div class="rung"><svg data-rungs="2"></svg><span>function map, chosen per function <b class="neg">−611,308</b></span></div>
-<p>Take <code>v8::base::TimeTicks::Now()</code>. Between the two releases it moved about 440 KB later in the file. Its body is 98 bytes, and three of them changed:</p>
+<p>Between the two releases, <code>v8::base::TimeTicks::Now()</code> moved about 440 KB later in the file. Three of its 98 bytes changed, all in the displacement of its one call:</p>
 
 <figure class="wide card">
 <div id="fngrid" class="scroll" style="--mw:700px"></div>
-<figcaption>The function moved one way and the stub it calls moved the other, so the distance between them changed. The decoder recomputes it.</figcaption>
 </figure>
 
-<p>That is nearly all code churn in a release-to-release build: the same instructions with different addresses inside them, Percival's second-order change one instruction at a time. A byte differ pays for it in every one of the roughly 925,000 functions in the image.</p>
-<p>The starting point already reproduces those three bytes most of the time: the equivalences copy the body and retarget the displacement through the equivalence map. For about one function in seven that comes out wrong, and this layer takes over. Usually the body was copied from the right place, but the displacements inside it were retargeted to the wrong one, because the equivalence map knows where bytes moved, not which function a call was to.</p>
-<p>The plan carries a function map: which old function became which new one, and where each body now belongs. The encoder knows this because Chrome's publisher has the unstripped build on both sides; the client receives no symbols, only where each matched body came from and where it lands. The decoder walks each placed function, decodes its x86, and re-encodes every PC-relative displacement (calls, jumps, RIP-relative loads) against the new addresses. For <code>TimeTicks::Now()</code> that reproduces those three bytes from nothing.</p>
-<p>The map has to be cheap or it cannot pay. Sent as plain addresses it would cost 1.32 MB compressed, more than the layer saves. So the plan does not send the list of old functions at all. Both sides enumerate it from the old image, from call targets, relocation targets and the <code>0xcc</code> padding Clang leaves between functions, which together find 99% of them; the plan carries only the exceptions and a replay of what changed, which functions were dropped, reordered, resized or inserted. That brings the map to 155 KB. Anything the decoder can enumerate, the plan names rather than spells out, and anything it can derive, the plan does not name either.</p>
-<p>Even at that price, the map on its own is a step backwards: retargeting every function through it predicts no better than the equivalences did, and the map still has to be paid for. What makes it pay is one bit per function, choosing whether the equivalence copy or the moved old body is the better starting point. Neither wins everywhere. Equivalences preserve the compiler's local layout, including the islands of data it emits between functions; function identity wins when the byte matcher has grabbed the wrong copy of near-identical code, which <a href="https://research.google/pubs/pub36912/">identical-code folding</a> (ICF) makes common.</p>
+<p>That is most of the churn between two release builds: the same instructions with different addresses inside them, across roughly 925,000 functions. Zucchini's method gets about one function in seven wrong, because the equivalence map knows where bytes moved, not which function a call was to.</p>
+<p>So the plan includes a <em>function map</em>: which old function became which new one. The encoder builds it from the publisher's unstripped builds, and the client never receives symbols. With it, the decoder recomputes every displacement from the functions' new addresses.</p>
+<p>Sent as a list of addresses, the map would cost 1.32 MB, more than it saves. But the decoder can find 99% of the old functions itself, from call targets, relocation targets and the <code>0xcc</code> padding Clang leaves between functions. The plan only has to list the ones it misses and what changed between builds: 155 KB.</p>
+<p>Even then the map alone is a step backwards: retargeting every function through it predicts no better than the equivalences did. What makes it pay is one bit per function, choosing the equivalence copy or the moved old body. Equivalences preserve the compiler's local layout, including data islands between functions; the map wins when the byte matcher grabbed the wrong copy of near-identical code, which <a href="https://research.google/pubs/pub36912/">identical-code folding</a> (ICF) makes common.</p>
 
 <figure class="card">
 <figcaption class="head">Every mapped function, by how many bytes each prediction gets wrong.</figcaption>
 <div id="selgrid" class="scroll" style="--mw:500px"></div>
 </figure>
 
-<p>The map is also what finishes the relocation table. A displacement only needs <em>some</em> equivalent destination; a pointer needs the right <em>identity</em>, and ICF means one old address can stand for several functions that the new build split apart. With the map naming which one, 99% of addends come out exact and the addend column shrinks six-fold.</p>
-
+<p>The function map also fixes most of the remaining relocation addends: 99% now come out exact, up from four in five.</p>
 
 <h2>Tables the ELF doesn't label</h2>
 <div class="rung"><svg data-rungs="3,4"></svg><span>unwind records · rodata jump tables <b class="neg">−401,536</b></span></div>
-<p><a href="https://refspecs.linuxfoundation.org/LSB_5.0.0/LSB-Core-generic/LSB-Core-generic/ehframechpt.html"><code>.eh_frame</code></a> is the same problem in a smaller section. Each frame record has a PC-relative start address that moves with its function, and the rest of the record usually doesn't. The decoder retargets the address field through the oracle and keeps the rest of the record, then regenerates <code>.eh_frame_hdr</code>, a sorted index over those records, rather than patching a second copy of the same facts.</p>
-<p><code>.rodata</code> is harder because nothing labels its address tables. Clang's switch jump tables are arrays of 32-bit offsets relative to the table's own base, indistinguishable from any other aligned integers. You can still guess: a run of aligned words that all land inside <code>.text</code> when added to the table base is probably a jump table. That test finds some 27,000 candidate tables.</p>
-<p>Rewriting all of them made the patch <em>worse</em>. Detection says what a region could be, not whether the rewrite beats the bytes the equivalence layer already supplied. So the encoder tries each candidate against the real target and ships a selection bitmap: about 3,600 tables are retargeted and the rest are left alone. The decoder then places the kept tables with a running cursor, each starting where the previous one ended, rather than by projecting their old addresses, with one small correction wherever the cursor is off.</p>
+<p>Clang compiles a <code>switch</code> to a <a href="https://en.wikipedia.org/wiki/Branch_table">jump table</a> in <code>.rodata</code>: a list of offsets to the code for each case. The offsets change when code moves, and nothing in the ELF marks where the tables are, so presage guesses: a run of values that all point into <code>.text</code> is probably one. That finds 27,000 candidates.</p>
+<p>Rewriting all of them made the patch <em>worse</em>: for most candidates the rewrite was no better than the bytes already copied. So the encoder tries each one against the real target and sends a bitmap of the ones to rewrite, about 3,600 of them.</p>
 
-<h2>Correcting what can't be rebuilt</h2>
+<h2>Address fields that still miss</h2>
 <div class="rung"><svg data-rungs="5"></svg><span>address-field remap <b class="neg">−180,456</b></span></div>
-<p>After all of the structural layers the decoder has an exact-length prediction that is 99.4% correct, and the remaining 0.6% still has shape. A delta format, which searches the prediction for long runs of the target's bytes, is the wrong tool for it. What is left in <code>.text</code> is half a million short edits, and those are cheaper as a plain list: the gap since the last edit, its length and the replacement bytes, each as its own column. Splitting the replacement bytes further by run length costs nothing to signal, because the decoder already knows each run's length, and a one-byte opcode fix has nothing in common with a four-byte displacement fix. Together that is 157 KB.</p>
-<p>The next layer went back to addresses. About a quarter of the wrong <code>.text</code> bytes were four-byte displacement fields that resolved to the wrong place. The decoder can enumerate all 8.7 million such fields in its own prediction. Where many fields disagree about the same target, the plan corrects the mapping once; the stragglers get a signed per-field delta. The encoder rejects any remap that would break more fields than it fixes. The layer traded 292 KB of plan for 472 KB of correction, and address fields fell from a quarter of the wrong code bytes to 2%. The same treatment extended to the operand fields the retargeter never writes: immediates and stack-slot displacements paid for their columns, register-relative displacements did not, and the encoder ships only the classes that do.</p>
+<p>About a quarter of the bytes still wrong in <code>.text</code> were four-byte displacement fields that resolved to the wrong place. The decoder can enumerate all 8.7 million such fields in its own prediction, so where many disagree about the same target the plan corrects the mapping once, and the stragglers get a per-field delta. Address fields fell from a quarter of the wrong code bytes to 2%. The same treatment extends to immediates and stack-slot displacements.</p>
 
 <h2>The correction knows the prediction</h2>
 <div class="rung"><svg data-rungs="6"></svg><span>derived map · prediction-conditioned coder · operand fields <b class="neg">−358,362</b></span></div>
-<p>Everything so far has used the prediction to build the file. The correction itself was then handed to an ordinary compressor, which sees a stream of replacement bytes and knows nothing about what they replace. But every correction byte sits on top of a predicted byte, and the two are related: a mispredicted displacement usually differs from the prediction in its low bytes only, and a recompiled instruction usually keeps its opcode and changes an operand.</p>
-<p>The last layer is a small context-mixing arithmetic coder that models each correction byte given the predicted byte underneath it. The encoder offers it to every stream of the correction and keeps it wherever it beats the general compressor. In Chrome's <code>.text</code> it wins the run lengths and every column of short replacement bytes, and loses, as it should, on the gaps between edits, which have no prediction byte to condition on, and on the long runs of recompiled code, where the byte underneath predicts nothing. It costs decode time, about a second and a half per megabyte of correction, and it pays twice: once on the correction, and again run over the plan's own columns with each column's structure as its context. That is the last bar of the chart: 2.26 MB, 38% of Zucchini's patch.</p>
+<p>Until now the correction went to an ordinary compressor, which sees replacement bytes and knows nothing about what they replace. But every correction byte sits on top of a predicted byte, and the two are related: a mispredicted displacement usually differs only in its low bytes, and a recompiled instruction usually keeps its opcode.</p>
+<p>The last layer is a small <a href="https://en.wikipedia.org/wiki/Context_mixing">context-mixing</a> <a href="https://en.wikipedia.org/wiki/Arithmetic_coding">arithmetic coder</a> that models each correction byte given the predicted byte underneath it. The encoder keeps it for each stream where it beats the general compressor: it wins on short replacement bytes and loses on long runs of recompiled code, where the byte underneath predicts nothing. It costs about a second and a half of decode per megabyte of correction. That is the last bar: 2.26 MB, 38% of Zucchini's patch.</p>
 
 <h2>What remains</h2>
 <figure class="card">
@@ -163,21 +134,13 @@
 </tbody></table>
 </figure>
 
-<p>Every layer is verified the same way: replay the plan, apply the correction, compare the 291 MB result to the target byte for byte. Applying the patch takes 2.7 seconds. For this pair, rebuilding the second-order changes instead of transmitting them cut an already executable-aware patch by more than half.</p>
+<p>Every layer is verified by replaying the plan, applying the correction and comparing all 291 MB to the target. Applying the final patch takes 2.7 seconds.</p>
 
-<p>What remains is not an address problem. More than a third of the final patch is <code>.text</code> correction, and the largest single item in it is 400 KB of replacement bytes for runs of five bytes or more: recompiled code, not addresses. Most of those bytes sit in the roughly 9,500 functions the compiler resized between the two builds. The <a href="https://chromium.googlesource.com/chromium/src/+log/151.0.7922.169..151.0.7922.173">commit log between the two tags</a> explains the scale: eight bug fixes touching about thirty source files, and six rolls of the Linux PGO profile. Thirty files don't resize 9,500 functions; a new profile does, because it drives inlining and hot/cold splitting across the whole binary. The bytes still to send are mostly the compiler reacting to a profile, not the fixes users are updating for. Predicting that is a different problem from predicting where things landed.</p>
+<p>More than a third of the final patch is <code>.text</code> correction, and its largest item is 400 KB of recompiled code, mostly in the roughly 9,500 functions the compiler resized between the two builds. The <a href="https://chromium.googlesource.com/chromium/src/+log/151.0.7922.169..151.0.7922.173">commit log between the two tags</a> has eight bug fixes touching about thirty source files, and six rolls of the Linux PGO profile. Thirty files don't resize 9,500 functions; a new profile does, because it drives inlining and hot/cold splitting across the whole binary. Most of what is left to send is the compiler reacting to a profile, not the fixes users are updating for.</p>
 
 <h2>Where to go from here</h2>
 
-    <p>I focused on Chrome as the test case because it's what Courgette and Zucchini were built for, and I
-        wanted to see how far a structure-aware patch could be pushed in a direct comparison. But the approach is not specific to it.
-        The core of presage builds a prediction from a plan and encodes the bytes that prediction got wrong;
-        everything it understands about x86-64 code and ELF tables lives in one structure module,
-        which can be combined with modules that model additional toolchain-specific structure.
-        Go binaries are a natural next target: less than half of a typical Go executable is machine code, and the rest is metadata the
-        linker derives from it, so structure-aware patches end up dozens of times smaller than general-purpose differs produce.
-        That is the subject of the next post.
-</p>
+<p>I used Chrome because it's what Courgette and Zucchini were built for, but everything presage knows about x86-64 and ELF lives in one structure module, and others can sit beside it. Go binaries are next: less than half of a typical Go executable is machine code and the rest is metadata the linker derives from it, so structure-aware patches come out dozens of times smaller than a general-purpose differ's. That is <a href="/writing/predicting-the-go-linker/">the next post</a>.</p>
 <p class="src">presage is on GitHub at <a href="https://github.com/wjordan/presage">wjordan/presage</a>.</p>
 
 </main>
@@ -255,30 +218,6 @@
     });
   }
 
-  // ---------- timeline ----------
-  const tl=[
-    [1999,'Exediff','https://robert.muth.org/Papers/1999-exediff.pdf'],
-    [2003,'bsdiff','https://www.daemonology.net/papers/bsdiff.pdf'],
-    [2006,'Percival thesis','https://www.daemonology.net/papers/thesis.pdf'],
-    [2009,'Courgette','https://www.chromium.org/developers/design-documents/software-updates-courgette/'],
-    [2017,'Zucchini','https://codereview.chromium.org/2922273002'],
-  ];
-  function drawTimeline(){
-    const host=document.getElementById('timeline'); host.innerHTML='';
-    const W=840,H=92,x0=30,x1=W-30,y=44;
-    const s=el('svg',{viewBox:`0 0 ${W} ${H}`,role:'img','aria-label':'Timeline of executable differencing'},host);
-    const ink=css('--ink'),muted=css('--muted'),rule=css('--rule'),plan=css('--plan');
-    const sx=yr=>x0+(yr-1997)/(2019-1997)*(x1-x0);
-    el('line',{x1:x0,x2:x1,y1:y,y2:y,stroke:rule,'stroke-width':2},s);
-    tl.forEach((t,i)=>{
-      const x=sx(t[0]), up=i%2===0;
-      el('circle',{cx:x,cy:y,r:5,fill:ink},s);
-      const g=el('a',{href:t[3],target:'_blank',rel:'noopener'},s);
-      el('text',{x:x,y:up?y-18:y+26,'font-size':12.5,fill:plan,'text-anchor':'middle','text-decoration':'underline'},g).textContent=t[1];
-      el('text',{x:x,y:up?y-34:y+42,'font-size':11,fill:muted,'text-anchor':'middle'},s).textContent=t[0];
-    });
-  }
-
   // ---------- rung ladder ----------
   function drawRungs(){
     const host=document.getElementById('rungs'); host.innerHTML='';
@@ -303,7 +242,7 @@
       const a=el('rect',{x:p1x,y:cy-8,width:Math.max(wp-1,1),height:16,fill:plan,opacity:isZ?.55:1},s);
       const b=el('rect',{x:p1x+wp+1,y:cy-8,width:Math.max(wc-1,1),height:16,fill:fix,opacity:isZ?.55:1},s);
       el('rect',{x:p1x+wp+wc-4,y:cy-8,width:4,height:16,rx:2,fill:fix,opacity:isZ?.55:1},s);
-      const tip=`${fmt(total)} B · plan ${fmt(planB)} · correction ${fmt(corr)}`;
+      const tip=`${fmt(total)} B · plan ${fmt(planB)} · correction ${fmt(corr)} · ${(100-(isZ?ZUC_RIGHT:r[2])).toFixed(1)}% of bytes predicted wrong`;
       hover(a,tip); hover(b,tip);
       const t=el('text',{x:p1x+wp+wc+8,y:cy+4,'font-size':11,fill:ink},s);
       t.textContent=(total/1e6).toFixed(2)+' MB';
@@ -312,25 +251,6 @@
   }
 
 
-  // ---------- section map ----------
-  const secs=[['.text',225655845],['.rela.dyn',26546616],['.rodata',23981900],['.data.rel.ro',11760272],['.eh_frame',1159416],['other',291196232-225655845-26546616-23981900-11760272-1159416]];
-  function drawSections(){
-    const host=document.getElementById('sections'); host.innerHTML='';
-    const W=840,H=62,barY=8,barH=34,total=291196232;
-    const s=el('svg',{viewBox:`0 0 ${W} ${H}`,role:'img','aria-label':'Sections of the Chrome executable in file order'},host);
-    const ink=css('--ink'),muted=css('--muted'),fix=css('--fix'),soft=css('--plan-soft'),rule=css('--rule');
-    const X=o=>o/total*W;
-    el('rect',{x:0,y:barY,width:W,height:barH,fill:rule,opacity:.5},s);
-    const fsecs=[['.rela.dyn',0x103a0,0x19511b8],['.rodata',0x1969600,0x16def4c],['.eh_frame',0x3088018,0x11b0f8],['.text',0x31a4000,0xd733c25],['.data.rel.ro',0x108dd670,0xb37290]];
-    fsecs.forEach(([nm,off,len])=>{
-      const x=X(off), w=len/total*W, isR=nm==='.rela.dyn';
-      const r=el('rect',{x:x,y:barY,width:Math.max(w-1,1.5),height:barH,fill:isR?fix:soft},s);
-      hover(r,`${nm}: ${fmt(len)} B (${(len/total*100).toFixed(1)}%)`);
-      const tw=nm.length*6.8+10;
-      if(w>tw){el('text',{x:x+w/2,y:barY+barH/2+4,'font-size':11,fill:isR?'#fff':ink,'text-anchor':'middle'},s).textContent=nm;}
-      else if(nm==='.data.rel.ro'){el('text',{x:x+w,y:barY+barH+16,'font-size':11,fill:muted,'text-anchor':'end'},s).textContent=nm;}
-    });
-  }
   // selection heatmap: SEL[i][j] = functions with wrong-bytes bin i under the equivalence copy and bin j under the function map; bin 0 = 0, bin k = [2^(k-1), 2^k), last bin open
   const SEL=[[759214,0,108,264,94,42,37,41,50,48,19,18,11,4,0],[7943,1397,6,10,7,21,20,21,13,4,3,2,1,0,0],[37821,110,3914,34,32,48,78,131,43,23,17,9,2,1,0],[62218,201,573,6912,62,168,281,238,140,75,45,16,3,2,0],[20451,69,247,1530,2249,224,442,703,431,267,189,76,13,3,0],[3941,12,43,175,504,875,337,441,751,606,362,200,61,10,1],[698,0,7,24,56,166,306,253,505,682,527,343,131,35,9],[117,0,0,1,7,15,79,110,133,405,434,294,179,87,24],[24,0,0,0,1,2,21,31,34,89,208,223,124,85,51],[9,0,0,0,0,0,0,1,21,34,91,134,127,81,70],[7,0,0,0,0,0,0,0,1,1,15,54,62,52,67],[0,0,0,0,0,0,0,0,0,0,0,5,21,34,54],[0,0,0,0,0,0,0,0,0,0,0,0,5,9,39],[0,0,0,0,0,0,0,0,0,0,0,0,0,0,16],[0,0,0,0,0,0,0,0,0,0,0,0,0,0,6]];
   function drawSel(){
@@ -500,7 +420,7 @@
   br.addEventListener('click',()=>{mode='row';br.setAttribute('aria-pressed','true');bs.setAttribute('aria-pressed','false');drawJoin();});
   bs.addEventListener('click',()=>{mode='slot';bs.setAttribute('aria-pressed','true');br.setAttribute('aria-pressed','false');drawJoin();});
 
-  function drawAll(){drawSparks();drawGrid(); drawFn();drawStrip();drawTimeline();drawRungs();drawSections();drawSel();}
+  function drawAll(){drawSparks();drawGrid(); drawFn();drawStrip();drawRungs();drawSel();}
   drawAll(); drawJoin();
   if(window.matchMedia){window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change',drawAll);}
   new MutationObserver(drawAll).observe(document.documentElement,{attributes:true,attributeFilter:['data-theme']});
