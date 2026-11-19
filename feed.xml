@@ -14,7 +14,7 @@
     <id>https://willjordan.us/writing/predicting-the-go-linker/</id>
     <updated>2026-09-02T00:00:00Z</updated>
     <published>2026-09-02T00:00:00Z</published>
-    <summary>The Go linker amplifies a one-line edit into megabytes of changed bytes. Nearly all of them are predictable from the old binary, so a patch carries only what the prediction misses: 1.1 KB for a one-line change, 80 KB for a Prometheus release.</summary>
+    <summary>The Go linker turns a one-line edit into megabytes of changed bytes. Presage predicts nearly all of them from the old binary. Its patch is 1.1 KB for a one-line edit or 80 KB between two Prometheus patch releases.</summary>
   </entry>
 
   <entry>
